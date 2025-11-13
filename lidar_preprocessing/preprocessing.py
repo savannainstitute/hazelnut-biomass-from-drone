@@ -93,7 +93,7 @@ def estimate_point_spacing(las_path):
     x, y = las.x, las.y
     area = (x.max() - x.min()) * (y.max() - y.min())
     if area == 0 or len(x) < 2:
-        return 0.25  # fallback
+        return 0.025 # fallback
     density = len(x) / area  # points per m^2
     spacing = 1 / np.sqrt(density)
     return spacing
