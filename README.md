@@ -37,7 +37,7 @@ Sample data for testing is provided in the `*/sample_data/` folders within each 
 3. Create and activate the conda environment:
 
     ```powershell
-    conda env create -f hazelnut-biomass.yml -n hazelnut-biomass
+    conda env create -f hazelnut-biomass.yml
     conda activate hazelnut-biomass
     ```
 
