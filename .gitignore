@@ -2,3 +2,6 @@
 /lidar_preprocessing/__pycache__
 /supplemental/__pycache__
 /canopy_segmentation/__pycache__
+/biomass_estimation/sample_data/outputs
+/canopy_segmentation/sample_data/outputs
+/lidar_preprocessing/sample_data/outputs
