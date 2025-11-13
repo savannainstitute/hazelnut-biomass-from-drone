@@ -86,8 +86,8 @@ You can run the entire pipeline (preprocessing, segmentation, biomass estimation
 ### Example
 
 ```powershell
-python main.py --input-las "sample_data/inputs/hazelnuts_valleyFarm_091625_clip.las" ^
-               --tree-tops-shp "canopy_segmentation/sample_data/inputs/hazelnuts_valleyFarm_markers.shp" ^
+python main.py --input-las "sample_data/inputs/hazelnuts_valleyFarm_091625_clip.las" `
+               --tree-tops-shp "canopy_segmentation/sample_data/inputs/hazelnuts_valleyFarm_markers.shp" `
                --output-dir "outputs"
 ```
 
