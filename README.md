@@ -26,7 +26,7 @@ This repository provides a modular pipeline to convert LiDAR point clouds into b
 
 ## Sample Data
 
-Sample data for testing is provided in the `*/sample_data/` folders within each subproject. Place the sample data in the repository root so subfolders (e.g., `lidar_preprocessing/sample_data`, `canopy_segmentation/sample_data`) contain the expected files.
+Sample data for testing is provided in the `*/sample_data/` folders within each subproject (e.g., `lidar_preprocessing/sample_data`, `canopy_segmentation/sample_data`).
 
 ---
 
