@@ -230,30 +230,39 @@ def adaptive_watershed(
         logging.error("No markers available for watershed.")
         return None
 
-    mask = np.isfinite(chm) & (chm > (min_height if min_height is not None else 0))
+    threshold = min_height if min_height is not None else 0
+    mask = np.isfinite(chm) & (chm > threshold)
     if extent_gdf is not None:
         mask = mask_segments_within_extent(mask.astype(np.uint8), profile, extent_gdf).astype(bool)
     if not np.any(mask):
         logging.error("No valid CHM pixels to segment (check minimum height threshold and extent).")
         return None
-    marker_positions = []
-    marker_heights = []
+
     marker_ids = np.unique(markers)
     marker_ids = marker_ids[marker_ids > 0]
-    for marker_id in marker_ids:
-        pos = np.where(markers == marker_id)
-        if len(pos[0]) > 0:
-            r, c = pos[0][0], pos[1][0]
-            marker_positions.append((r, c))
-            marker_heights.append(chm[r, c])
+    marker_positions = [np.where(markers == marker_id) for marker_id in marker_ids]
+    marker_positions = [(pos[0][0], pos[1][0]) for pos in marker_positions if len(pos[0]) > 0]
+    marker_heights = [chm[r, c] for r, c in marker_positions]
     marker_positions = np.array(marker_positions)
     marker_heights = np.array(marker_heights)
+
     smoothed_chm = gaussian(chm, sigma=surface_smooth_sigma, preserve_range=True)
     grad_y, grad_x = np.gradient(smoothed_chm)
     gradient_mag = np.sqrt(grad_x**2 + grad_y**2)
     gradient_mag = np.where(np.isfinite(gradient_mag), gradient_mag, 0)
     height_range = np.nanmax(smoothed_chm) - np.nanmin(smoothed_chm[np.isfinite(smoothed_chm)])
     proximity_penalty = np.full_like(smoothed_chm, np.inf)
+
+    num_markers = len(marker_positions)
+    max_search_distance = 20.0
+
+    pos_r = marker_positions[:, 0][:, np.newaxis]
+    pos_c = marker_positions[:, 1][:, np.newaxis]
+    dists_px = np.sqrt((pos_r - pos_r.T) ** 2 + (pos_c - pos_c.T) ** 2)
+    dists_m = dists_px * res_m_per_px
+    distance_matrix = dists_m
+
+    path_cross_matrix = np.zeros((num_markers, num_markers), dtype=bool)
     def path_crosses_low_height(start_r, start_c, end_r, end_c):
         from skimage.draw import line
         line_r, line_c = line(start_r, start_c, end_r, end_c)
@@ -263,35 +272,63 @@ def adaptive_watershed(
                 if np.isfinite(val) and min_height is not None and val < min_height:
                     return True
         return False
+
+    for i in range(num_markers):
+        for j in range(i + 1, num_markers):
+            if distance_matrix[i, j] <= max_search_distance:
+                crosses = path_crosses_low_height(
+                    marker_positions[i][0], marker_positions[i][1],
+                    marker_positions[j][0], marker_positions[j][1]
+                )
+                path_cross_matrix[i, j] = path_cross_matrix[j, i] = crosses
+
     for i, marker_id in enumerate(marker_ids):
         marker_pos = marker_positions[i]
         marker_height = marker_heights[i]
-        max_search_distance = 25.0
-        distances_to_others = []
-        neighbor_info = []
-        for j, other_pos in enumerate(marker_positions):
-            if i != j:
-                dist_px = np.sqrt((marker_pos[0] - other_pos[0])**2 + (marker_pos[1] - other_pos[1])**2)
-                dist_m = dist_px * res_m_per_px
-                if (dist_m <= max_search_distance and not path_crosses_low_height(marker_pos[0], marker_pos[1], other_pos[0], other_pos[1])):
-                    distances_to_others.append(dist_m)
-                    neighbor_info.append((j, dist_m, marker_heights[j]))
-        if len(distances_to_others) > 0:
-            nearest_idx = np.argmin(distances_to_others)
-            nearest_distance = distances_to_others[nearest_idx]
-            nearest_neighbor_info = neighbor_info[nearest_idx]
-            nearest_neighbor_height = nearest_neighbor_info[2]
-            height_ratio = marker_height / nearest_neighbor_height
+
+        valid = (
+            (np.arange(num_markers) != i) &
+            (distance_matrix[i] <= max_search_distance) &
+            (~path_cross_matrix[i])
+        )
+        neighbor_indices = np.where(valid)[0]
+        if neighbor_indices.size > 0:
+            neighbor_distances = distance_matrix[i, neighbor_indices]
+            nearest_idx_in_neighbors = np.argmin(neighbor_distances)
+            nearest_idx = neighbor_indices[nearest_idx_in_neighbors]
+            nearest_distance = neighbor_distances[nearest_idx_in_neighbors]
+            nearest_neighbor_height = marker_heights[nearest_idx]
+
+            if nearest_neighbor_height == 0:
+                height_ratio = 1.0
+            else:
+                height_ratio = marker_height / nearest_neighbor_height
+
             height_factor = base_height_factor + height_factor_scale * np.clip(height_ratio, 0.5, 1.5)
             local_characteristic_distance = (nearest_distance / 2.0) * height_factor
-            logging.info(f"Tree {marker_id}: height={marker_height:.1f}m, neighbor_dist={nearest_distance:.1f}m, "
-                         f"neighbor_height={nearest_neighbor_height:.1f}m, height_factor={height_factor:.2f}, "
-                         f"boundary_dist={local_characteristic_distance:.1f}m")
+
+            logging.info(
+                f"Tree {marker_id}: height={marker_height:.1f}m, neighbor_dist={nearest_distance:.1f}m, "
+                f"neighbor_height={nearest_neighbor_height:.1f}m, height_factor={height_factor:.2f}, "
+                f"boundary_dist={local_characteristic_distance:.1f}m"
+            )
+
             marker_mask = (markers == marker_id)
-            distance_from_this_marker = ndimage.distance_transform_edt(~marker_mask)
+            buf_px = int(np.ceil((nearest_distance / 2.0) / res_m_per_px)) + 10
+            r, c = marker_pos
+            rmin = max(0, r - buf_px)
+            rmax = min(chm.shape[0], r + buf_px + 1)
+            cmin = max(0, c - buf_px)
+            cmax = min(chm.shape[1], c + buf_px + 1)
+            local_marker_mask = marker_mask[rmin:rmax, cmin:cmax]
+            distance_from_this_marker = ndimage.distance_transform_edt(~local_marker_mask)
             distance_m = distance_from_this_marker * res_m_per_px
+
             local_penalty = penalty_strength * height_range * (1 - np.exp(-distance_m / local_characteristic_distance))
-            proximity_penalty = np.minimum(proximity_penalty, local_penalty)
+
+            proximity_penalty[rmin:rmax, cmin:cmax] = np.minimum(
+                proximity_penalty[rmin:rmax, cmin:cmax], local_penalty
+            )
         else:
             logging.info(f"Tree {marker_id}: isolated, using natural watershed boundaries")
             continue
