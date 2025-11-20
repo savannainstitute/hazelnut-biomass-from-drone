@@ -46,7 +46,7 @@ def run_pdal_pipeline(pipeline_json):
 
 def classify_ground(input_las, output_las, scalar=1.2, slope=0.15, threshold=0.07, window=2.5):
     """
-    Classify ground points using PDAL SMRF filter.
+    Classify ground points using PDAL SMRF filter. https://pdal.io/en/stable/stages/filters.smrf.html
 
     Args:
         input_las (str): Path to input LAS file.
@@ -100,7 +100,7 @@ def estimate_point_spacing(las_path):
 
 def create_dtm(classified_las, dtm_tif, res=None):
     """
-    Create Digital Terrain Model (DTM) from ground-classified LAS.
+    Create Digital Terrain Model (DTM) from ground-classified LAS. Uses inverse-distance weighting
 
     Args:
         classified_las (str): Path to ground-classified LAS file.
