@@ -15,13 +15,21 @@ import numpy as np
 import rasterio
 from rasterio import features
 
-VOLUME_COEF = 4.674
-CARBON_CONVERSION = 0.52  # 52% of above-ground biomass is carbon
-REL_RMSE = 0.193  # Relative RMSE is 19.3% for biomass estimation
+# LiDAR OLS coeffs and relative RMSE
+LIDAR_COEF = 4.674
+LIDAR_RMSE = 0.193 # relative
 
-def estimate_biomass(volume_m3):
+# SfM Power-law coefficients and relative RMSE
+SFM_COEF = 4.021
+SFM_EXP = 0.841
+SFM_RMSE = 0.226 # relative
+
+DRY_FRACTION = 0.548
+CARBON_FRACTION = 0.557
+
+def estimate_biomass_lidar(volume_m3):
     """
-    Estimate above-ground biomass (kg) from canopy volume (m³) using an allometric equation.
+    Estimate above-ground biomass (kg) from LiDAR-derived canopy volume (m³) using an allometric equation.
 
     Args:
         volume_m3 (float or np.ndarray): Canopy volume in cubic meters.
@@ -29,11 +37,24 @@ def estimate_biomass(volume_m3):
     Returns:
         float or np.ndarray: Estimated above-ground biomass in kilograms.
     """
-    return VOLUME_COEF * volume_m3
+    return LIDAR_COEF * volume_m3
+
+def estimate_biomass_sfm(volume_m3):
+    """
+    Estimate above-ground biomass (kg) from SfM-derived canopy volume (m³) using an allometric equation.
+
+    Args:
+        volume_m3 (float or np.ndarray): Canopy volume in cubic meters.
+
+    Returns:
+        float or np.ndarray: Estimated above-ground biomass in kilograms.
+    """
+    return SFM_COEF * np.power(volume_m3, SFM_EXP)
 
 def estimate_carbon(biomass_kg):
     """
-    Estimate carbon content (kg) from above-ground biomass (kg).
+    Estimate carbon content (kg) from above-ground wet biomass (kg).
+    Carbon = biomass * dry_fraction * carbon_fraction
 
     Args:
         biomass_kg (float or np.ndarray): Above-ground biomass in kilograms.
@@ -41,7 +62,7 @@ def estimate_carbon(biomass_kg):
     Returns:
         float or np.ndarray: Estimated carbon in kilograms.
     """
-    return biomass_kg * CARBON_CONVERSION
+    return biomass_kg * DRY_FRACTION * CARBON_FRACTION
 
 def calculate_polygon_volumes(polygons_gdf, chm_path):
     """
@@ -69,7 +90,7 @@ def calculate_polygon_volumes(polygons_gdf, chm_path):
     polygons_gdf['volume_m3'] = volumes
     return polygons_gdf
 
-def add_biomass_and_carbon(gdf):
+def add_biomass_and_carbon(gdf, method='lidar'):
     """
     Add biomass and carbon columns (with relative error bounds) to a GeoDataFrame.
 
@@ -82,12 +103,19 @@ def add_biomass_and_carbon(gdf):
             - 'agb_kg_lo', 'agb_kg_up'
             - 'c_kg_lo', 'c_kg_up'
     """
-    gdf['agb_kg'] = estimate_biomass(gdf['volume_m3']).clip(lower=0)
+    if method == 'lidar':
+        gdf['agb_kg'] = estimate_biomass_lidar(gdf['volume_m3']).clip(lower=0)
+        rel_rmse = LIDAR_RMSE
+    elif method == 'sfm':
+        gdf['agb_kg'] = estimate_biomass_sfm(gdf['volume_m3']).clip(lower=0)
+        rel_rmse = SFM_RMSE
+    else:
+        raise ValueError("method must be 'lidar' or 'sfm'")
     gdf['c_kg'] = estimate_carbon(gdf['agb_kg'])
-    gdf['agb_kg_lo'] = (gdf['agb_kg'] * (1 - REL_RMSE)).clip(lower=0)
-    gdf['agb_kg_up'] = gdf['agb_kg'] * (1 + REL_RMSE)
-    gdf['c_kg_lo'] = gdf['agb_kg_lo'] * CARBON_CONVERSION
-    gdf['c_kg_up'] = gdf['agb_kg_up'] * CARBON_CONVERSION
+    gdf['agb_kg_lo'] = (gdf['agb_kg'] * (1 - rel_rmse)).clip(lower=0)
+    gdf['agb_kg_up'] = gdf['agb_kg'] * (1 + rel_rmse)
+    gdf['c_kg_lo'] = estimate_carbon(gdf['agb_kg_lo'])
+    gdf['c_kg_up'] = estimate_carbon(gdf['agb_kg_up'])
     return gdf
 
 def save_results(gdf, output_shp, output_csv):
@@ -105,7 +133,7 @@ def save_results(gdf, output_shp, output_csv):
     gdf.to_file(output_shp)
     gdf.drop(columns='geometry').to_csv(output_csv, index=False)
 
-def run_allometry(polygons_path, chm_path, output_shp, output_csv):
+def run_allometry(polygons_path, chm_path, output_shp, output_csv, method='lidar'):
     """
     Full workflow: load polygons, calculate volume from CHM, add biomass/carbon,
     save results to shapefile and CSV, and return GeoDataFrame.
@@ -121,6 +149,6 @@ def run_allometry(polygons_path, chm_path, output_shp, output_csv):
     """
     polygons_gdf = gpd.read_file(polygons_path)
     polygons_gdf = calculate_polygon_volumes(polygons_gdf, chm_path)
-    polygons_gdf = add_biomass_and_carbon(polygons_gdf)
+    polygons_gdf = add_biomass_and_carbon(polygons_gdf, method=method)
     save_results(polygons_gdf, output_shp, output_csv)
     return polygons_gdf
