@@ -144,8 +144,8 @@ def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
             "resolution": res,
             "output_type": "idw",
             "power": 2,
-            "radius": res * 5,
-            "window_size": 64,
+            "radius": res * 10,
+            "window_size": 128,
             "data_type": "float32"
         }
     ]
@@ -186,8 +186,8 @@ def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
             "resolution": res,
             "output_type": "idw",
             "power": 2,
-            "radius": res * 5,
-            "window_size": 64,
+            "radius": res * 10,
+            "window_size": 128,
             "data_type": "float32"
         }
     ]
