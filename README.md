@@ -66,7 +66,7 @@ Sample data for testing is provided in the `*/sample_data/` folders within each 
 
 **Inputs:**
 - `sample_orchard_chm.tif` (from preprocessing)
-- Tree points shapefile (RTK or digitized points)
+- `sample_orchard_trees.shp` or `sample_orchard_trees.csv` (RTK or digitized points)
 
 **Outputs:**
 - `sample_orchard_segments.shp` (canopy polygons)
