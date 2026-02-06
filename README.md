@@ -20,7 +20,7 @@ This repository provides a modular pipeline to convert LiDAR point clouds into b
 - Recommended: 8+ GB GPU VRAM
 - RAM: 64+ GB for large datasets
 - CPU: multi-core (8+ cores recommended)
-- Disk: ~100 GB free for full orchard datasets
+- Disk: ~100 GB free for full orchard datasets (local SSD recommended)
 
 ---
 
@@ -43,6 +43,10 @@ Sample data for testing is provided in the `*/sample_data/` folders within each 
 
 - All required dependencies are installed via the provided YAML file.
 
+4. Change directory to project root:
+    ```powershell
+    cd "<path>/<to>/hazelnut-biomass-from-drone"
+    ```
 ---
 
 ## Pipeline Steps: Inputs & Outputs
@@ -86,8 +90,9 @@ You can run the entire pipeline (preprocessing, segmentation, biomass estimation
 ### Example
 
 ```powershell
-python main.py --input-las "sample_data/inputs/hazelnuts_valleyFarm_091625_clip.las" `
+python main.py --input-las "lidar_preprocessing/sample_data/inputs/hazelnuts_valleyFarm_091625_clip.las" `
                --tree-tops-shp "canopy_segmentation/sample_data/inputs/hazelnuts_valleyFarm_markers.shp" `
+               --method lidar `
                --output-dir "outputs"
 ```
 
