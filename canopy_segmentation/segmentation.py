@@ -71,7 +71,7 @@ def load_chm(chm_path, extent_shapefile=None):
         px_h = abs(transform.e)
         res_m_per_px = float((px_w + px_h) / 2.0)
         profile["chm_path"] = chm_path
-        logging.info(f"Loaded CHM: shape={chm.shape}, resolution={res_m_per_px:.4f} m/px")
+        logging.info(f"Loaded CHM: shape={chm.shape}, resolution={res_m_per_px*100:.4f} cm/px")
         return chm, profile, res_m_per_px, extent_gdf
 
 def meters_to_pixels(distance_meters, res_m_per_px):
