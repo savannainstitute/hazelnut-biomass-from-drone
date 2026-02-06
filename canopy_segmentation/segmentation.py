@@ -205,26 +205,23 @@ def refine_tree_tops(chm, profile, shapefile_path, buffer_meters=1.75, extent_gd
     logging.info(f"Loaded {len(refined_gdf)} tree tops (skipped {skipped})")
     return np.array(refined_rows), np.array(refined_cols), markers, refined_gdf
 
-def adaptive_watershed(
-    chm, markers, res_m_per_px, profile, min_height=0.1, base_height_factor=0.8, height_factor_scale=0.2,
-    penalty_strength=0.1, boundary_penalty_weight=1.0, gradient_weight=0.4, surface_smooth_sigma=0.5,
-    compactness=0.0001, extent_gdf=None
+def marker_watershed(
+    chm, markers, profile, min_height=0.1, surface_smooth_sigma=0.5,
+    extent_gdf=None
 ):
     """
-    Perform adaptive marker-controlled watershed segmentation on the CHM.
+    Perform marker-controlled watershed segmentation on the CHM using only inverted height.
 
     Args:
         chm (np.ndarray): CHM raster array.
         markers (np.ndarray): Marker array for segmentation.
-        res_m_per_px (float): Raster resolution in meters per pixel.
         profile (dict): Rasterio profile.
-        min_height (float, optional): Minimum CHM height to consider.
-        base_height_factor, height_factor_scale, penalty_strength, boundary_penalty_weight,
-        gradient_weight, surface_smooth_sigma, compactness: Watershed parameters.
+        min_height (float): Minimum CHM height to consider.
+        surface_smooth_sigma (float): Gaussian smoothing sigma for CHM.
         extent_gdf (GeoDataFrame, optional): Extent geometry for masking.
 
     Returns:
-        np.ndarray or None: Segmented label array, or None if failed.
+        np.ndarray: Segmented label array.
     """
     if markers is None or np.max(markers) == 0:
         logging.error("No markers available for watershed.")
@@ -242,108 +239,20 @@ def adaptive_watershed(
     marker_ids = marker_ids[marker_ids > 0]
     marker_positions = [np.where(markers == marker_id) for marker_id in marker_ids]
     marker_positions = [(pos[0][0], pos[1][0]) for pos in marker_positions if len(pos[0]) > 0]
-    marker_heights = [chm[r, c] for r, c in marker_positions]
-    marker_positions = np.array(marker_positions)
-    marker_heights = np.array(marker_heights)
+
+    for r, c in marker_positions:
+        mask[max(0, r-1):min(mask.shape[0], r+2), max(0, c-1):min(mask.shape[1], c+2)] = True
 
     smoothed_chm = gaussian(chm, sigma=surface_smooth_sigma, preserve_range=True)
-    grad_y, grad_x = np.gradient(smoothed_chm)
-    gradient_mag = np.sqrt(grad_x**2 + grad_y**2)
-    gradient_mag = np.where(np.isfinite(gradient_mag), gradient_mag, 0)
-    height_range = np.nanmax(smoothed_chm) - np.nanmin(smoothed_chm[np.isfinite(smoothed_chm)])
-    proximity_penalty = np.full_like(smoothed_chm, np.inf)
-
-    num_markers = len(marker_positions)
-    max_search_distance = 20.0
-
-    pos_r = marker_positions[:, 0][:, np.newaxis]
-    pos_c = marker_positions[:, 1][:, np.newaxis]
-    dists_px = np.sqrt((pos_r - pos_r.T) ** 2 + (pos_c - pos_c.T) ** 2)
-    dists_m = dists_px * res_m_per_px
-    distance_matrix = dists_m
-
-    path_cross_matrix = np.zeros((num_markers, num_markers), dtype=bool)
-    def path_crosses_low_height(start_r, start_c, end_r, end_c):
-        from skimage.draw import line
-        line_r, line_c = line(start_r, start_c, end_r, end_c)
-        for lr, lc in zip(line_r, line_c):
-            if (0 <= lr < chm.shape[0] and 0 <= lc < chm.shape[1]):
-                val = chm[lr, lc]
-                if np.isfinite(val) and min_height is not None and val < min_height:
-                    return True
-        return False
-
-    for i in range(num_markers):
-        for j in range(i + 1, num_markers):
-            if distance_matrix[i, j] <= max_search_distance:
-                crosses = path_crosses_low_height(
-                    marker_positions[i][0], marker_positions[i][1],
-                    marker_positions[j][0], marker_positions[j][1]
-                )
-                path_cross_matrix[i, j] = path_cross_matrix[j, i] = crosses
-
-    for i, marker_id in enumerate(marker_ids):
-        marker_pos = marker_positions[i]
-        marker_height = marker_heights[i]
-
-        valid = (
-            (np.arange(num_markers) != i) &
-            (distance_matrix[i] <= max_search_distance) &
-            (~path_cross_matrix[i])
-        )
-        neighbor_indices = np.where(valid)[0]
-        if neighbor_indices.size > 0:
-            neighbor_distances = distance_matrix[i, neighbor_indices]
-            nearest_idx_in_neighbors = np.argmin(neighbor_distances)
-            nearest_idx = neighbor_indices[nearest_idx_in_neighbors]
-            nearest_distance = neighbor_distances[nearest_idx_in_neighbors]
-            nearest_neighbor_height = marker_heights[nearest_idx]
-
-            if nearest_neighbor_height == 0:
-                height_ratio = 1.0
-            else:
-                height_ratio = marker_height / nearest_neighbor_height
-
-            height_factor = base_height_factor + height_factor_scale * np.clip(height_ratio, 0.5, 1.5)
-            local_characteristic_distance = (nearest_distance / 2.0) * height_factor
-
-            logging.info(
-                f"Tree {marker_id}: height={marker_height:.1f}m, neighbor_dist={nearest_distance:.1f}m, "
-                f"neighbor_height={nearest_neighbor_height:.1f}m, height_factor={height_factor:.2f}, "
-                f"boundary_dist={local_characteristic_distance:.1f}m"
-            )
-
-            marker_mask = (markers == marker_id)
-            buf_px = int(np.ceil((nearest_distance / 2.0) / res_m_per_px)) + 10
-            r, c = marker_pos
-            rmin = max(0, r - buf_px)
-            rmax = min(chm.shape[0], r + buf_px + 1)
-            cmin = max(0, c - buf_px)
-            cmax = min(chm.shape[1], c + buf_px + 1)
-            local_marker_mask = marker_mask[rmin:rmax, cmin:cmax]
-            distance_from_this_marker = ndimage.distance_transform_edt(~local_marker_mask)
-            distance_m = distance_from_this_marker * res_m_per_px
-
-            local_penalty = penalty_strength * height_range * (1 - np.exp(-distance_m / local_characteristic_distance))
-
-            proximity_penalty[rmin:rmax, cmin:cmax] = np.minimum(
-                proximity_penalty[rmin:rmax, cmin:cmax], local_penalty
-            )
-        else:
-            logging.info(f"Tree {marker_id}: isolated, using natural watershed boundaries")
-            continue
-
-    proximity_penalty = np.where(np.isinf(proximity_penalty), penalty_strength * height_range, proximity_penalty)
     inv_height = np.where(np.isfinite(smoothed_chm), -smoothed_chm, 0.0)
-    surface = inv_height + (boundary_penalty_weight * proximity_penalty) + (gradient_weight * gradient_mag)
+
     segments = watershed(
-        surface,
+        inv_height,
         markers,
         connectivity=2,
-        compactness=compactness,
         mask=mask
     )
-    logging.info(f"Adaptive watershed produced {len(np.unique(segments)) - 1} segments")
+    logging.info(f"Watershed produced {len(np.unique(segments)) - 1} segments")
     return segments
 
 def save_refined_tree_tops(refined_gdf, profile, output_dir):
@@ -494,13 +403,7 @@ def segment_canopies(
     output_dir=None,
     extent_shapefile=None,
     buffer_meters=1.75,
-    base_height_factor=0.8,
-    height_factor_scale=0.2,
-    penalty_strength=0.1,
-    boundary_penalty_weight=1.0,
-    gradient_weight=0.4,
     surface_smooth_sigma=0.5,
-    compactness=0.0001,
     min_height=0.1
 ):
     """
@@ -512,13 +415,7 @@ def segment_canopies(
         output_dir (str, optional): Output directory.
         extent_shapefile (str, optional): Path to extent shapefile for cropping/masking.
         buffer_meters (float): Buffer for local maxima search (meters).
-        base_height_factor (float): Base scaling factor for adaptive boundary distance.
-        height_factor_scale (float): Scaling factor for height ratio adjustment.
-        penalty_strength (float): Strength of proximity penalty in segmentation.
-        boundary_penalty_weight (float): Weight for proximity penalty in surface.
-        gradient_weight (float): Weight for CHM gradient in surface.
         surface_smooth_sigma (float): Gaussian smoothing sigma for CHM.
-        compactness (float): Compactness parameter for watershed.
         min_height (float): Minimum CHM height to consider (meters).
 
     Returns:
@@ -540,16 +437,10 @@ def segment_canopies(
     if markers is None:
         logging.error("No valid refined tree tops found; exiting.")
         return None
-    segments = adaptive_watershed(
-        chm, markers, res_m_per_px, profile,
+    segments = marker_watershed(
+        chm, markers, profile,
         min_height=min_height,
-        base_height_factor=base_height_factor,
-        height_factor_scale=height_factor_scale,
-        penalty_strength=penalty_strength,
-        boundary_penalty_weight=boundary_penalty_weight,
-        gradient_weight=gradient_weight,
         surface_smooth_sigma=surface_smooth_sigma,
-        compactness=compactness,
         extent_gdf=extent_gdf
     )
     if segments is None:
