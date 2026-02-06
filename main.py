@@ -45,8 +45,8 @@ def main():
     print("\nEstimating biomass and carbon...\n")
     prefix = os.path.splitext(os.path.basename(chm_path))[0].replace('_chm', '')
     polygons_path = os.path.join(args.output_dir, f"{prefix}_segments.shp")
-    output_shp = os.path.join(args.output_dir, f"{prefix}_biomass_results.shp")
-    output_csv = os.path.join(args.output_dir, f"{prefix}_biomass_results.csv")
+    output_shp = os.path.join(args.output_dir, f"{prefix}_biomass_carbon.shp")
+    output_csv = os.path.join(args.output_dir, f"{prefix}_biomass_carbon.csv")
     run_allometry(polygons_path, chm_path, output_shp, output_csv, method=args.method)
     print(f"Results saved to: {output_shp} and {output_csv}")
 
