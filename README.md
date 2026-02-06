@@ -9,8 +9,8 @@ Pipeline for estimating hazelnut above-ground biomass and stored carbon using ae
 This repository provides a modular pipeline to convert LiDAR point clouds into bush-level biomass and carbon storage estimates. The main steps are:
 
 1. **LiDAR preprocessing**: Classify ground, build DTM/DSM, and produce a CHM.
-2. **Canopy segmentation**: Segment individual hazelnut canopies from the CHM using a proximity-aware watershed algorithm with tree-top markers.
-3. **Biomass estimation**: Compute per-bush volume metrics and apply a volume-based allometric equation to estimate biomass and carbon.
+2. **Canopy segmentation**: Segment individual hazelnut canopies from the CHM using a marker-controlled watershed algorithm with tree tops as the control markers.
+3. **Biomass estimation**: Compute per-bush volume metrics and apply a volume-based allometric equation to estimate wet above-ground biomass and carbon.
 
 ---
 
@@ -78,8 +78,8 @@ Sample data for testing is provided in the `*/sample_data/` folders within each 
 - `sample_orchard_chm.tif` (from preprocessing)
 
 **Outputs:**
-- `sample_orchard_biomass_results.shp` (polygons with biomass/carbon attributes)
-- `sample_orchard_biomass_results.csv` (tabular results)
+- `sample_orchard_biomass_carbon.shp` (polygons with biomass/carbon attributes)
+- `sample_orchard_biomass_carbon.csv` (tabular results)
 
 ---
 
@@ -109,8 +109,8 @@ For example, if your input LAS is `sample_orchard.las`, the outputs will be:
 - `sample_orchard_dsm.tif`  
 - `sample_orchard_chm.tif`  
 - `sample_orchard_segments.shp`  
-- `sample_orchard_biomass_results.shp`  
-- `sample_orchard_biomass_results.csv`  
+- `sample_orchard_biomass_carbon.shp`  
+- `sample_orchard_biomass_carbon.csv`  
 
 ---
 
