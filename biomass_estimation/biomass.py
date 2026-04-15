@@ -25,7 +25,7 @@ SFM_EXP = 0.841
 SFM_RMSE = 0.226 # relative
 
 DRY_FRACTION = 0.548
-CARBON_FRACTION = 0.557
+CARBON_FRACTION = 0.5
 
 def estimate_biomass_lidar(volume_m3):
     """
