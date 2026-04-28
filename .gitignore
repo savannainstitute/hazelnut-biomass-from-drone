@@ -5,3 +5,4 @@
 /biomass_estimation/sample_data/outputs
 /canopy_segmentation/sample_data/outputs
 /lidar_preprocessing/sample_data/outputs
+notebooks/density_exploration.ipynb
