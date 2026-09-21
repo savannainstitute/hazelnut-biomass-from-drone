@@ -59,7 +59,7 @@ hazelnut-biomass-from-drone/
    conda activate hazelnut-biomass
    ```
 
-The environment installs Python 3.10, PDAL 2.8.4, rasterio 1.4.3, geopandas 1.1.1, scikit-image 0.25.2, laspy 2.6.1, scipy 1.15.2, and related dependencies (see `hazelnut-biomass.yml` for pinned versions).
+The environment installs Python 3.14, PDAL, rasterio, geopandas, scikit-image, laspy with the LAZ backend, scipy, and related dependencies (see `hazelnut-biomass.yml`).
 
 **Hardware:** All processing is CPU-based. No GPU is required. For full-orchard datasets, 16–64 GB RAM and a local SSD are recommended to handle large LAS files and raster operations.
 
