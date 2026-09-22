@@ -13,6 +13,7 @@ dependencies:
   - numpy
   - pandas
   - rasterio
+  - ruff
   - scikit-image
   - scikit-learn
   - scipy

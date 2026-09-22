@@ -7,3 +7,5 @@
 /lidar_preprocessing/sample_data/outputs
 notebooks/density_exploration.ipynb
 /.claude/
+/CLAUDE.md
+/__pycache__

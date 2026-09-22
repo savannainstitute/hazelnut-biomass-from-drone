@@ -1,0 +1,10 @@
+# 79 columns and the E/W/F/I rule set are PEP 8 as written; notebooks are walkthroughs, not library code.
+line-length = 79
+target-version = "py314"
+extend-exclude = ["notebooks"]
+
+[lint]
+select = ["E", "W", "F", "I"]
+
+[format]
+quote-style = "preserve"
