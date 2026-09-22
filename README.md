@@ -8,9 +8,9 @@ A modular Python pipeline for estimating per-bush above-ground biomass (AGB) and
 
 The pipeline converts a raw LAS point cloud into bush-level biomass and carbon storage estimates in three stages:
 
-1. **LiDAR preprocessing** — Classify ground returns, generate DTM/DSM rasters, and compute a Canopy Height Model (CHM).
-2. **Canopy segmentation** — Segment individual hazelnut canopies from the CHM using a marker-controlled watershed algorithm, seeded by user-supplied tree-top points.
-3. **Biomass estimation** — Compute per-bush canopy volume from the CHM, then apply a fitted allometric equation to estimate wet AGB and carbon.
+1. LiDAR preprocessing: Classify ground returns, generate DTM/DSM rasters, and compute a Canopy Height Model (CHM).
+2. Canopy segmentation: Segment individual hazelnut canopies from the CHM using a marker-controlled watershed algorithm, seeded by user-supplied tree-top points.
+3. Biomass estimation: Compute per-bush canopy volume from the CHM, then apply a fitted allometric equation to estimate wet AGB and carbon.
 
 Both LiDAR and SfM acquisition modes are supported with separate allometric models.
 
@@ -45,7 +45,7 @@ hazelnut-biomass-from-drone/
 
 ## Environment Setup
 
-> **Note:** PDAL must be installed via conda-forge. It is not available through pip and is not compatible with a pip-only install.
+> Note: PDAL must be installed via conda-forge. It is not available through pip and is not compatible with a pip-only install.
 
 1. Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or Mambaforge.
 2. Clone this repository:
@@ -61,7 +61,7 @@ hazelnut-biomass-from-drone/
 
 The environment installs Python 3.14, PDAL, rasterio, geopandas, scikit-image, laspy with the LAZ backend, scipy, and related dependencies (see `hazelnut-biomass.yml`).
 
-**Hardware:** All processing is CPU-based. No GPU is required. For full-orchard datasets, 16–64 GB RAM and a local SSD are recommended to handle large LAS files and raster operations.
+Hardware: All processing is CPU-based. No GPU is required. For full-orchard datasets, 16–64 GB RAM and a local SSD are recommended to handle large LAS files and raster operations.
 
 ---
 
@@ -71,7 +71,7 @@ The environment installs Python 3.14, PDAL, rasterio, geopandas, scikit-image, l
 |---|---|
 | Raw LAS file | Aerial LiDAR or SfM point cloud in LAS/LAZ format |
 | Tree-top marker shapefile | Point shapefile with one point per hazelnut bush (e.g., from RTK GPS survey or manual digitization over imagery) |
-| Extent shapefile *(optional)* | Polygon shapefile used to crop/mask all raster and vector outputs to an orchard boundary |
+| Extent shapefile (optional) | Polygon shapefile used to crop/mask all raster and vector outputs to an orchard boundary |
 
 Tree-top markers are required and must be supplied by the user. They are used as watershed seeds. The pipeline refines each marker to the local CHM maximum within a 1.75 m radius.
 
@@ -89,7 +89,7 @@ python main.py `
     --output-dir "outputs"
 ```
 
-**Arguments:**
+### Arguments
 
 | Argument | Required | Description |
 |---|---|---|
@@ -104,15 +104,15 @@ python main.py `
 
 ## Pipeline Details
 
-### Stage 1 — LiDAR Preprocessing (`lidar_preprocessing/preprocessing.py`)
+### Stage 1: LiDAR Preprocessing (`lidar_preprocessing/preprocessing.py`)
 
-1. **Ground classification** — Runs PDAL's [SMRF filter](https://pdal.io/en/stable/stages/filters.smrf.html) on the raw LAS file. Default parameters: `scalar=1.2`, `slope=0.15`, `threshold=0.07`, `window=2.5`.
-2. **DTM** — Rasterizes ground-classified points (LAS class 2) using inverse-distance weighting (IDW, power=2).
-3. **DSM** — Rasterizes first returns (`ReturnNumber == 1`) using IDW.
-4. **CHM** — Computed as `DSM − DTM`. Negative values are clamped to zero. If DSM and DTM extents differ, the DTM is bilinearly resampled to match the DSM grid before subtraction.
-5. **Resolution** — If `--res` is not specified, it is estimated as `1 / sqrt(point_density)` from the LAS header.
+1. Ground classification: Runs PDAL's [SMRF filter](https://pdal.io/en/stable/stages/filters.smrf.html) on the raw LAS file. Default parameters: `scalar=1.2`, `slope=0.15`, `threshold=0.07`, `window=2.5`.
+2. DTM: Rasterizes ground-classified points (LAS class 2) using inverse-distance weighting (IDW, power=2).
+3. DSM: Rasterizes first returns (`ReturnNumber == 1`) using IDW.
+4. CHM: Computed as `DSM − DTM`. Negative values are clamped to zero. If DSM and DTM extents differ, the DTM is bilinearly resampled to match the DSM grid before subtraction.
+5. Resolution: If `--res` is not specified, it is estimated as `1 / sqrt(point_density)` from the LAS header.
 
-**Outputs:**
+#### Outputs
 
 | File | Description |
 |---|---|
@@ -123,13 +123,13 @@ python main.py `
 
 ---
 
-### Stage 2 — Canopy Segmentation (`canopy_segmentation/segmentation.py`)
+### Stage 2: Canopy Segmentation (`canopy_segmentation/segmentation.py`)
 
-1. **Marker refinement** — Each input tree-top point is snapped to the CHM local maximum within a 1.75 m buffer window.
-2. **Watershed segmentation** — Runs scikit-image's `watershed` on the inverted, Gaussian-smoothed CHM (sigma=0.5), using the refined markers as seeds. Only pixels with CHM > 0.1 m are included in the segmentation mask.
-3. **Polygon extraction** — Each segment label is converted to a polygon. Small holes (< 8 px) are filled; small objects (< 8 px) are removed.
+1. Marker refinement: Each input tree-top point is snapped to the CHM local maximum within a 1.75 m buffer window.
+2. Watershed segmentation: Runs scikit-image's `watershed` on the inverted, Gaussian-smoothed CHM (sigma=0.5), using the refined markers as seeds. Only pixels with CHM > 0.1 m are included in the segmentation mask.
+3. Polygon extraction: Each segment label is converted to a polygon. Small holes (< 8 px) are filled; small objects (< 8 px) are removed.
 
-**Outputs:**
+#### Outputs
 
 | File | Description |
 |---|---|
@@ -138,15 +138,15 @@ python main.py `
 
 ---
 
-### Stage 3 — Biomass Estimation (`biomass_estimation/biomass.py`)
+### Stage 3: Biomass Estimation (`biomass_estimation/biomass.py`)
 
-**Volume calculation:** For each canopy polygon, the CHM is masked to that polygon and volume is computed as:
+Volume calculation: For each canopy polygon, the CHM is masked to that polygon and volume is computed as:
 
 $$V = \sum_i h_i \cdot A_{px}$$
 
 where $h_i$ is the CHM height of pixel $i$ and $A_{px}$ is the pixel area in m².
 
-**Allometric equations:**
+#### Allometric equations
 
 | Method | Equation | Relative RMSE |
 |---|---|---|
@@ -155,15 +155,15 @@ where $h_i$ is the CHM height of pixel $i$ and $A_{px}$ is the pixel area in m²
 
 AGB is wet above-ground biomass in kg; volume $V$ is in m³. Coefficients were derived by regression against destructive harvest measurements (ground-truth dataset not yet publicly released; see `supplemental/lr.py`).
 
-**Carbon estimation:**
+#### Carbon estimation
 
 $$C = \text{AGB} \times 0.548 \times 0.5$$
 
 where 0.548 is the dry-matter fraction and 0.5 is the carbon fraction, both determined from lab analysis of destructively harvested hazelnut bushes (publication pending).
 
-**Error bounds** are added as AGB and carbon columns at ±1 relative RMSE.
+Error bounds are added as AGB and carbon columns at ±1 relative RMSE.
 
-**Output columns added to the segment shapefile/CSV:**
+#### Output columns added to the segment shapefile/CSV
 
 | Column | Description |
 |---|---|
@@ -175,7 +175,7 @@ where 0.548 is the dry-matter fraction and 0.5 is the carbon fraction, both dete
 | `c_kg_lo` | Carbon lower bound |
 | `c_kg_up` | Carbon upper bound |
 
-**Outputs:**
+#### Outputs
 
 | File | Description |
 |---|---|
@@ -186,7 +186,7 @@ where 0.548 is the dry-matter fraction and 0.5 is the carbon fraction, both dete
 
 ## Notebooks
 
-- `notebooks/hazelnut_biomass_from_drone.ipynb` — Full pipeline walkthrough with step-by-step commentary.
+- `notebooks/hazelnut_biomass_from_drone.ipynb`: Full pipeline walkthrough with step-by-step commentary.
 
 Run with the `hazelnut-biomass` kernel (installed as `ipykernel` in the conda environment).
 
@@ -208,12 +208,12 @@ The CSV must contain at minimum `biomass_kg` and `volume_m3` columns. Optional `
 
 ## Limitations and Assumptions
 
-- **Tree-top markers are required.** The segmentation is marker-controlled; fully automated tree detection is not implemented. Marker quality directly affects segmentation accuracy.
-- **LAS coordinate units assumed to be meters.** The SMRF window, IDW radius, and buffer parameters are all specified in meters.
-- **Single-return or classified inputs.** The DSM uses `ReturnNumber == 1` (first returns). Multi-return data where first returns are not classified will work; unclassified single-return data (e.g., some SfM outputs) should also work if all returns are flagged as return 1.
-- **Allometric equations are hazelnut-specific.** Coefficients were fitted to hazelnut destructive harvest data and are not expected to generalize to other species or canopy architectures without re-fitting.
-- **PDAL must be conda-installed.** The pipeline shells out to the PDAL CLI via `subprocess`. PDAL is not pip-installable.
-- **No GPU usage.** All computation is CPU-based (numpy, rasterio, scikit-image, scipy).
+- Tree-top markers are required. The segmentation is marker-controlled; fully automated tree detection is not implemented. Marker quality directly affects segmentation accuracy.
+- LAS coordinate units assumed to be meters. The SMRF window, IDW radius, and buffer parameters are all specified in meters.
+- Single-return or classified inputs. The DSM uses `ReturnNumber == 1` (first returns). Multi-return data where first returns are not classified will work; unclassified single-return data (e.g., some SfM outputs) should also work if all returns are flagged as return 1.
+- Allometric equations are hazelnut-specific. Coefficients were fitted to hazelnut destructive harvest data and are not expected to generalize to other species or canopy architectures without re-fitting.
+- PDAL must be conda-installed. The pipeline shells out to the PDAL CLI via `subprocess`. PDAL is not pip-installable.
+- No GPU usage. All computation is CPU-based (numpy, rasterio, scikit-image, scipy).
 
 ---
 
