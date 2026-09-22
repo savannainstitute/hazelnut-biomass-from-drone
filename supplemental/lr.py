@@ -5,21 +5,23 @@ This module provides a CLI wrapper for regression analysis used to evaluate
 biomass–volume relationships. It performs the following tasks:
 1. Load a CSV dataset containing 'biomass_kg' and 'volume_m3' columns.
 2. Fit raw and log-transformed linear regression models.
-3. Compute R², residual normality (Shapiro-Wilk), and approximate confidence intervals.
-4. Fit a pooled regression model across all data and report absolute and relative RMSE.
+3. Compute R², residual normality (Shapiro-Wilk), and approximate confidence
+   intervals.
+4. Fit a pooled regression model across all data and report absolute and
+   relative RMSE.
 5. Optionally display a diagnostic plot of observed vs. fitted biomass.
 """
 
 import argparse
-import sys
 import os
+import sys
 import warnings
 
-import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score, mean_squared_error
+import pandas as pd
 from scipy.stats import shapiro, t
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
 
 
 def load_data(csv_path):
@@ -32,7 +34,8 @@ def load_data(csv_path):
     Returns:
         tuple: (df_full, df)
             - df_full: Full dataframe with missing rows dropped.
-            - df: Copy of df_full without 'site' and 'treeID' columns (if present).
+            - df: Copy of df_full without 'site' and 'treeID' columns (if
+                present).
 
     Raises:
         FileNotFoundError: If the input CSV file does not exist.
@@ -84,8 +87,14 @@ def run_regressions(df_full, df, do_print=True):
             sh_log_p = shapiro(resid_log).pvalue
         except Exception:
             sh_log_p = float('nan')
-        print(f"  Raw: R² = {r2_score(y, lr_raw.predict(X)):.3f}, Shapiro p = {sh_raw_p:.3f}")
-        print(f"  Log: R² = {r2_score(y_log, lr_log.predict(X)):.3f}, Shapiro p = {sh_log_p:.3f}")
+        print(
+            f"  Raw: R² = {r2_score(y, lr_raw.predict(X)):.3f}, "
+            f"Shapiro p = {sh_raw_p:.3f}"
+        )
+        print(
+            f"  Log: R² = {r2_score(y_log, lr_log.predict(X)):.3f}, "
+            f"Shapiro p = {sh_log_p:.3f}"
+        )
 
     n = len(y)
     dof = max(1, n - 1)
@@ -94,15 +103,24 @@ def run_regressions(df_full, df, do_print=True):
     t_val = t.ppf(0.975, dof)
     ci = t_val * se
     if do_print:
-        print(f"Raw model: biomass = {lr_raw.coef_[0]:.3f} × volume ± {ci:.1f} kg (approx 95% CI)")
+        print(
+            f"Raw model: biomass = {lr_raw.coef_[0]:.3f} × volume "
+            f"± {ci:.1f} kg (approx 95% CI)"
+        )
 
-    lr_pooled = LinearRegression(fit_intercept=False).fit(df_full[['volume_m3']], df_full['biomass_kg'])
+    lr_pooled = LinearRegression(fit_intercept=False).fit(
+        df_full[['volume_m3']], df_full['biomass_kg']
+    )
     y_pred = lr_pooled.predict(df_full[['volume_m3']])
     r2 = r2_score(df_full['biomass_kg'], y_pred)
     rmse = np.sqrt(mean_squared_error(df_full['biomass_kg'], y_pred))
     rel_rmse = rmse / df_full['biomass_kg'].mean()
     if do_print:
-        print(f"Pooled: coef = {lr_pooled.coef_[0]:.3f}, R² = {r2:.3f}, RMSE = {rmse:.1f}, rel_rmse = {rel_rmse:.3f}, n = {len(df_full)}")
+        print(
+            f"Pooled: coef = {lr_pooled.coef_[0]:.3f}, R² = {r2:.3f}, "
+            f"RMSE = {rmse:.1f}, rel_rmse = {rel_rmse:.3f}, "
+            f"n = {len(df_full)}"
+        )
 
     out = {
         'lr_raw': lr_raw,
@@ -110,7 +128,7 @@ def run_regressions(df_full, df, do_print=True):
         'lr_pooled': lr_pooled,
         'pooled_r2': r2,
         'pooled_rmse': rmse,
-        'y_pred': y_pred
+        'y_pred': y_pred,
     }
     return out
 
@@ -132,7 +150,12 @@ def optional_plot(df_full, y_pred):
         warnings.warn("matplotlib not available; skipping plots")
         return
     plt.figure(figsize=(6, 4))
-    plt.scatter(df_full['volume_m3'], df_full['biomass_kg'], alpha=0.5, label='Observed')
+    plt.scatter(
+        df_full['volume_m3'],
+        df_full['biomass_kg'],
+        alpha=0.5,
+        label='Observed',
+    )
     plt.plot(df_full['volume_m3'], y_pred, color='red', label='Fitted')
     plt.xlabel('Volume (m³)')
     plt.ylabel('Biomass (kg)')
@@ -152,9 +175,19 @@ def main(argv=None):
     Returns:
         int: Exit code (0 = success, 2 = data load error).
     """
-    parser = argparse.ArgumentParser(description='Linear regression diagnostics for hazelnut biomass')
-    parser.add_argument('--csv', required=True, help='Path to CSV with biomass and volume columns')
-    parser.add_argument('--plot', action='store_true', help='Show basic diagnostic plot (requires matplotlib)')
+    parser = argparse.ArgumentParser(
+        description='Linear regression diagnostics for hazelnut biomass'
+    )
+    parser.add_argument(
+        '--csv',
+        required=True,
+        help='Path to CSV with biomass and volume columns',
+    )
+    parser.add_argument(
+        '--plot',
+        action='store_true',
+        help='Show basic diagnostic plot (requires matplotlib)',
+    )
     args = parser.parse_args(argv)
 
     try:

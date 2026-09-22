@@ -1,10 +1,12 @@
 """
-Estimate hazelnut bush biomass and carbon sequestration from segmented CHM rasters and bush polygons.
+Estimate hazelnut bush biomass and carbon sequestration from
+segmented CHM rasters and bush polygons.
 
 This module provides functions to:
-1. Calculate per-bush canopy volume (m³) by overlaying bush polygons on a CHM raster,
-   summing pixel-wise (x-size * y-size * height) within each polygon.
-2. Estimate above-ground biomass (kg) from canopy volume using an allometric equation.
+1. Calculate per-bush canopy volume (m³) by overlaying bush polygons on a CHM
+   raster, summing pixel-wise (x-size * y-size * height) within each polygon.
+2. Estimate above-ground biomass (kg) from canopy volume using an
+   allometric equation.
 3. Estimate carbon (kg) as a fixed proportion of biomass.
 4. Add error bounds to biomass and carbon estimates.
 5. Return a GeoDataFrame with all results for further export or analysis.
@@ -17,19 +19,21 @@ from rasterio import features
 
 # LiDAR OLS coeffs and relative RMSE
 LIDAR_COEF = 4.674
-LIDAR_RMSE = 0.193 # relative
+LIDAR_RMSE = 0.193  # relative
 
 # SfM Power-law coefficients and relative RMSE
 SFM_COEF = 4.021
 SFM_EXP = 0.841
-SFM_RMSE = 0.226 # relative
+SFM_RMSE = 0.226  # relative
 
 DRY_FRACTION = 0.548
 CARBON_FRACTION = 0.5
 
+
 def estimate_biomass_lidar(volume_m3):
     """
-    Estimate above-ground biomass (kg) from LiDAR-derived canopy volume (m³) using an allometric equation.
+    Estimate above-ground biomass (kg) from LiDAR-derived canopy volume
+    (m³) using an allometric equation.
 
     Args:
         volume_m3 (float or np.ndarray): Canopy volume in cubic meters.
@@ -39,9 +43,11 @@ def estimate_biomass_lidar(volume_m3):
     """
     return LIDAR_COEF * volume_m3
 
+
 def estimate_biomass_sfm(volume_m3):
     """
-    Estimate above-ground biomass (kg) from SfM-derived canopy volume (m³) using an allometric equation.
+    Estimate above-ground biomass (kg) from SfM-derived canopy volume
+    (m³) using an allometric equation.
 
     Args:
         volume_m3 (float or np.ndarray): Canopy volume in cubic meters.
@@ -50,6 +56,7 @@ def estimate_biomass_sfm(volume_m3):
         float or np.ndarray: Estimated above-ground biomass in kilograms.
     """
     return SFM_COEF * np.power(volume_m3, SFM_EXP)
+
 
 def estimate_carbon(biomass_kg):
     """
@@ -64,9 +71,11 @@ def estimate_carbon(biomass_kg):
     """
     return biomass_kg * DRY_FRACTION * CARBON_FRACTION
 
+
 def calculate_polygon_volumes(polygons_gdf, chm_path):
     """
-    Calculate canopy volume (m³) for each polygon by overlaying polygons on a CHM raster.
+    Calculate canopy volume (m³) for each polygon by overlaying polygons
+    on a CHM raster.
 
     Args:
         polygons_gdf (GeoDataFrame): GeoDataFrame with bush polygons.
@@ -78,10 +87,13 @@ def calculate_polygon_volumes(polygons_gdf, chm_path):
     with rasterio.open(chm_path) as src:
         chm = src.read(1)
         transform = src.transform
-        pixel_area = abs(transform[0] * transform[4])  # xres * yres (yres is negative)
+        # xres * yres (yres is negative)
+        pixel_area = abs(transform[0] * transform[4])
         volumes = []
         for geom in polygons_gdf.geometry:
-            mask = features.geometry_mask([geom], out_shape=chm.shape, transform=transform, invert=True)
+            mask = features.geometry_mask(
+                [geom], out_shape=chm.shape, transform=transform, invert=True
+            )
             heights = chm[mask]
             heights = heights[~np.isnan(heights)]  # Remove NaN (nodata)
             volume = np.sum(heights * pixel_area)
@@ -90,9 +102,11 @@ def calculate_polygon_volumes(polygons_gdf, chm_path):
     polygons_gdf['volume_m3'] = volumes
     return polygons_gdf
 
+
 def add_biomass_and_carbon(gdf, method='lidar'):
     """
-    Add biomass and carbon columns (with relative error bounds) to a GeoDataFrame.
+    Add biomass and carbon columns (with relative error bounds) to a
+    GeoDataFrame.
 
     Args:
         gdf (GeoDataFrame): Input GeoDataFrame with 'volume_m3' column.
@@ -118,9 +132,11 @@ def add_biomass_and_carbon(gdf, method='lidar'):
     gdf['c_kg_up'] = estimate_carbon(gdf['agb_kg_up'])
     return gdf
 
+
 def save_results(gdf, output_shp, output_csv):
     """
-    Save the GeoDataFrame with biomass and carbon columns to a shapefile and CSV.
+    Save the GeoDataFrame with biomass and carbon columns to a shapefile
+    and CSV.
 
     Args:
         gdf (GeoDataFrame): Input GeoDataFrame with biomass/carbon columns.
@@ -133,10 +149,14 @@ def save_results(gdf, output_shp, output_csv):
     gdf.to_file(output_shp)
     gdf.drop(columns='geometry').to_csv(output_csv, index=False)
 
-def run_allometry(polygons_path, chm_path, output_shp, output_csv, method='lidar'):
+
+def run_allometry(
+    polygons_path, chm_path, output_shp, output_csv, method='lidar'
+):
     """
-    Full workflow: load polygons, calculate volume from CHM, add biomass/carbon,
-    save results to shapefile and CSV, and return GeoDataFrame.
+    Full workflow: load polygons, calculate volume from CHM, add
+    biomass/carbon, save results to shapefile and CSV, and return
+    GeoDataFrame.
 
     Args:
         polygons_path (str): Path to bush/canopy polygons (shapefile).

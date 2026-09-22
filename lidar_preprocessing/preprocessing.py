@@ -1,5 +1,6 @@
 """
-Preprocess LiDAR point cloud data for hazelnut biomass estimation using PDAL and rasterio.
+Preprocess LiDAR point cloud data for hazelnut biomass estimation using
+PDAL and rasterio.
 
 Steps:
 1. Ground classification (PDAL)
@@ -9,21 +10,24 @@ Steps:
 5. Save outputs as GeoTIFFs (rasterio)
 """
 
-import os
 import logging
-import rasterio
-from rasterio.warp import reproject, Resampling
+import os
+import subprocess
+
 import geopandas as gpd
 import laspy
 import numpy as np
-import subprocess
+import rasterio
+from rasterio.warp import Resampling, reproject
+
 
 def run_pdal_pipeline(pipeline_json):
     """
     Run a PDAL pipeline from a JSON object.
 
     Args:
-        pipeline_json (dict or list): PDAL pipeline definition as a Python object.
+        pipeline_json (dict or list): PDAL pipeline definition as a Python
+            object.
 
     Raises:
         RuntimeError: If the PDAL pipeline fails.
@@ -33,11 +37,14 @@ def run_pdal_pipeline(pipeline_json):
     """
     import json
     import tempfile
+
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
         f.write(json.dumps(pipeline_json))
         pipeline_path = f.name
     try:
-        result = subprocess.run(['pdal', 'pipeline', pipeline_path], capture_output=True, text=True)
+        result = subprocess.run(
+            ['pdal', 'pipeline', pipeline_path], capture_output=True, text=True
+        )
         if result.returncode != 0:
             logging.error(f"PDAL pipeline failed: {result.stderr}")
             raise RuntimeError(f"PDAL pipeline failed: {result.stderr}")
@@ -45,6 +52,7 @@ def run_pdal_pipeline(pipeline_json):
             logging.info(f"PDAL pipeline succeeded: {result.stdout}")
     finally:
         os.remove(pipeline_path)
+
 
 def get_bounds_from_shapefile(shapefile_path):
     """
@@ -54,26 +62,36 @@ def get_bounds_from_shapefile(shapefile_path):
     minx, miny, maxx, maxy = gdf.total_bounds
     return f"([{minx},{maxx}],[{miny},{maxy}])"
 
-def classify_ground(input_las, output_las, scalar=1.2, slope=0.15, threshold=0.07, window=2.5, bounds=None):
+
+def classify_ground(
+    input_las,
+    output_las,
+    scalar=1.2,
+    slope=0.15,
+    threshold=0.07,
+    window=2.5,
+    bounds=None,
+):
     """
     Classify ground points using PDAL SMRF filter. https://pdal.io/en/stable/stages/filters.smrf.html
 
     Args:
         input_las (str): Path to input LAS file.
         output_las (str): Path to output classified LAS file.
-        scalar (float): Multiplier for the mean absolute deviation (MAD) for ground threshold.
+        scalar (float): Multiplier for the mean absolute deviation (MAD) for
+            ground threshold.
         slope (float): Maximum allowed slope between neighboring points.
-        threshold (float): Maximum allowed height difference for ground classification.
-        window (float): Neighborhood window size in meters (suggested: max canopy diameter).
-        bounds (str, optional): Optional bounds to crop the input LAS (e.g., "([xmin,xmax],[ymin,ymax])").
+        threshold (float): Maximum allowed height difference for ground
+            classification.
+        window (float): Neighborhood window size in meters (suggested: max
+            canopy diameter).
+        bounds (str, optional): Optional bounds to crop the input LAS
+            (e.g., "([xmin,xmax],[ymin,ymax])").
     Returns:
         None
     """
     logging.info("Classifying ground points with SMRF...")
-    readers_las = {
-        "type": "readers.las",
-        "filename": input_las
-    }
+    readers_las = {"type": "readers.las", "filename": input_las}
     if bounds:
         readers_las["bounds"] = bounds
     ground_pipeline = [
@@ -83,15 +101,13 @@ def classify_ground(input_las, output_las, scalar=1.2, slope=0.15, threshold=0.0
             "scalar": scalar,
             "slope": slope,
             "threshold": threshold,
-            "window": window
+            "window": window,
         },
-        {
-            "type": "writers.las",
-            "filename": output_las
-        }
+        {"type": "writers.las", "filename": output_las},
     ]
     run_pdal_pipeline(ground_pipeline)
     logging.info(f"Classified LAS saved to {output_las}")
+
 
 def estimate_point_spacing(las_path):
     """
@@ -107,37 +123,38 @@ def estimate_point_spacing(las_path):
             return 0.025  # fallback
         density = header.point_count / area
         spacing = 1 / np.sqrt(density)
-        logging.info(f"Estimated point spacing: {spacing:.3f} m (density: {density:.2f} pts/m²)")
+        logging.info(
+            f"Estimated point spacing: {spacing:.3f} m "
+            f"(density: {density:.2f} pts/m²)"
+        )
         return spacing
+
 
 def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
     """
-    Create Digital Terrain Model (DTM) from ground-classified LAS. Uses inverse-distance weighting
+    Create Digital Terrain Model (DTM) from ground-classified LAS. Uses
+    inverse-distance weighting
 
     Args:
         classified_las (str): Path to ground-classified LAS file.
         dtm_tif (str): Output path for DTM GeoTIFF.
-        res (float, optional): Raster resolution in meters. If None, estimated from point spacing.
-        bounds (str, optional): Optional bounds to crop the input LAS (e.g., "([xmin,xmax],[ymin,ymax])").
+        res (float, optional): Raster resolution in meters. If None,
+            estimated from point spacing.
+        bounds (str, optional): Optional bounds to crop the input LAS
+            (e.g., "([xmin,xmax],[ymin,ymax])").
     Returns:
         None
     """
     logging.info("Creating DTM...")
     if res is None:
         res = estimate_point_spacing(classified_las)
-    logging.info(f"DTM resolution: {res*100:.3f} cm")
-    readers_las = {
-        "type": "readers.las",
-        "filename": classified_las
-    }
+    logging.info(f"DTM resolution: {res * 100:.3f} cm")
+    readers_las = {"type": "readers.las", "filename": classified_las}
     if bounds:
         readers_las["bounds"] = bounds
     dtm_pipeline = [
         readers_las,
-        {
-            "type": "filters.range",
-            "limits": "Classification[2:2]"
-        },
+        {"type": "filters.range", "limits": "Classification[2:2]"},
         {
             "type": "writers.gdal",
             "filename": dtm_tif,
@@ -146,11 +163,12 @@ def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
             "power": 2,
             "radius": res * 10,
             "window_size": 128,
-            "data_type": "float32"
-        }
+            "data_type": "float32",
+        },
     ]
     run_pdal_pipeline(dtm_pipeline)
     logging.info(f"DTM saved to {dtm_tif}")
+
 
 def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
     """
@@ -159,27 +177,23 @@ def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
     Args:
         classified_las (str): Path to ground-classified LAS file.
         dsm_tif (str): Output path for DSM GeoTIFF.
-        res (float, optional): Raster resolution in meters. If None, estimated from point spacing.
-        bounds (str, optional): Optional bounds to crop the input LAS (e.g., "([xmin,xmax],[ymin,ymax])").
+        res (float, optional): Raster resolution in meters. If None,
+            estimated from point spacing.
+        bounds (str, optional): Optional bounds to crop the input LAS
+            (e.g., "([xmin,xmax],[ymin,ymax])").
     Returns:
         None
     """
     logging.info("Creating DSM...")
     if res is None:
         res = estimate_point_spacing(classified_las)
-    logging.info(f"DSM resolution: {res*100:.3f} cm")
-    readers_las = {
-        "type": "readers.las",
-        "filename": classified_las
-    }
+    logging.info(f"DSM resolution: {res * 100:.3f} cm")
+    readers_las = {"type": "readers.las", "filename": classified_las}
     if bounds:
         readers_las["bounds"] = bounds
     dsm_pipeline = [
         readers_las,
-        {
-            "type": "filters.range",
-            "limits": "ReturnNumber[1:1]"
-        },
+        {"type": "filters.range", "limits": "ReturnNumber[1:1]"},
         {
             "type": "writers.gdal",
             "filename": dsm_tif,
@@ -188,11 +202,12 @@ def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
             "power": 2,
             "radius": res * 10,
             "window_size": 128,
-            "data_type": "float32"
-        }
+            "data_type": "float32",
+        },
     ]
     run_pdal_pipeline(dsm_pipeline)
     logging.info(f"DSM saved to {dsm_tif}")
+
 
 def create_chm(dsm_tif, dtm_tif, chm_tif):
     """
@@ -211,7 +226,9 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
         dtm = dtm_src.read(1)
 
         # Align DTM to DSM if needed
-        if (dsm.shape != dtm.shape) or (dsm_src.transform != dtm_src.transform):
+        if (dsm.shape != dtm.shape) or (
+            dsm_src.transform != dtm_src.transform
+        ):
             logging.info("Aligning DTM to DSM before calculating...")
             aligned_dtm = np.empty_like(dsm)
             reproject(
@@ -221,7 +238,7 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
                 src_crs=dtm_src.crs,
                 dst_transform=dsm_src.transform,
                 dst_crs=dsm_src.crs,
-                resampling=Resampling.bilinear
+                resampling=Resampling.bilinear,
             )
             logging.info("DTM aligned to DSM.")
             dtm = aligned_dtm
@@ -235,6 +252,7 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
     logging.info(f"CHM saved to {chm_tif}")
     return chm
 
+
 def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
     """
     Run all preprocessing steps and return file paths.
@@ -242,7 +260,8 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
         input_las (str): Path to input LAS file.
         output_dir (str): Output directory for all results.
         res (float, optional): Raster resolution in meters (default 0.25).
-        extent_shapefile (str, optional): Path to extent shapefile for cropping/masking.
+        extent_shapefile (str, optional): Path to extent shapefile for
+            cropping/masking.
     Returns:
         dict: {
             "classified_las": path to ground-classified LAS,
@@ -269,7 +288,7 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
 
     if res is None:
         res = estimate_point_spacing(ground_las)
-        
+
     create_dtm(ground_las, dtm_tif, res, bounds=bounds)
     create_dsm(ground_las, dsm_tif, res, bounds=bounds)
     chm = create_chm(dsm_tif, dtm_tif, chm_tif)
@@ -279,5 +298,5 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
         "dtm": dtm_tif,
         "dsm": dsm_tif,
         "chm": chm_tif,
-        "chm_array": chm
+        "chm_array": chm,
     }

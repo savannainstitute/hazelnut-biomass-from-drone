@@ -1,19 +1,42 @@
-import os
 import argparse
-from lidar_preprocessing.preprocessing import preprocess_lidar
-from canopy_segmentation.segmentation import segment_canopies
+import os
+
 from biomass_estimation.biomass import run_allometry
+from canopy_segmentation.segmentation import segment_canopies
+from lidar_preprocessing.preprocessing import preprocess_lidar
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Full pipeline: LiDAR preprocessing, canopy segmentation, biomass & carbon estimation."
+        description=(
+            "Full pipeline: LiDAR preprocessing, canopy segmentation, "
+            "biomass & carbon estimation."
+        )
     )
-    parser.add_argument('--input-las', required=True, help='Input LAS file path')
-    parser.add_argument('--tree-tops-shp', required=True, help='Input tree tops shapefile path')
+    parser.add_argument(
+        '--input-las', required=True, help='Input LAS file path'
+    )
+    parser.add_argument(
+        '--tree-tops-shp', required=True, help='Input tree tops shapefile path'
+    )
     parser.add_argument('--output-dir', required=True, help='Output directory')
-    parser.add_argument('--extent-shapefile', default=None, help='Optional extent shapefile for cropping/masking')
-    parser.add_argument('--res', type=float, default=None, help='Raster resolution in meters (default: LAS point spacing)')
-    parser.add_argument('--method', choices=['lidar', 'sfm'], default='lidar', help='Allometry method: lidar or sfm')
+    parser.add_argument(
+        '--extent-shapefile',
+        default=None,
+        help='Optional extent shapefile for cropping/masking',
+    )
+    parser.add_argument(
+        '--res',
+        type=float,
+        default=None,
+        help='Raster resolution in meters (default: LAS point spacing)',
+    )
+    parser.add_argument(
+        '--method',
+        choices=['lidar', 'sfm'],
+        default='lidar',
+        help='Allometry method: lidar or sfm',
+    )
     args = parser.parse_args()
 
     # Step 1: Preprocess LiDAR
@@ -22,7 +45,7 @@ def main():
         args.input_las,
         args.output_dir,
         res=args.res,
-        extent_shapefile=args.extent_shapefile
+        extent_shapefile=args.extent_shapefile,
     )
     chm_path = pre["chm"]
     print(f"CHM created at: {chm_path}")
@@ -33,7 +56,7 @@ def main():
         chm_path=chm_path,
         tree_tops_shp=args.tree_tops_shp,
         output_dir=args.output_dir,
-        extent_shapefile=args.extent_shapefile
+        extent_shapefile=args.extent_shapefile,
     )
 
     if seg is None:
@@ -43,12 +66,17 @@ def main():
 
     # Step 3: Biomass & Carbon Estimation
     print("\nEstimating biomass and carbon...\n")
-    prefix = os.path.splitext(os.path.basename(chm_path))[0].replace('_chm', '')
+    prefix = os.path.splitext(os.path.basename(chm_path))[0].replace(
+        '_chm', ''
+    )
     polygons_path = os.path.join(args.output_dir, f"{prefix}_segments.shp")
     output_shp = os.path.join(args.output_dir, f"{prefix}_biomass_carbon.shp")
     output_csv = os.path.join(args.output_dir, f"{prefix}_biomass_carbon.csv")
-    run_allometry(polygons_path, chm_path, output_shp, output_csv, method=args.method)
+    run_allometry(
+        polygons_path, chm_path, output_shp, output_csv, method=args.method
+    )
     print(f"Results saved to: {output_shp} and {output_csv}")
+
 
 if __name__ == "__main__":
     main()
