@@ -63,6 +63,12 @@ def get_bounds_from_shapefile(shapefile_path):
     return f"([{minx},{maxx}],[{miny},{maxy}])"
 
 
+def crop_stage(bounds):
+    """A filters.crop stage for a PDAL bounds string. readers.las has no
+    bounds option, so a crop has to be its own stage."""
+    return {"type": "filters.crop", "bounds": bounds}
+
+
 def classify_ground(
     input_las,
     output_las,
@@ -71,6 +77,7 @@ def classify_ground(
     threshold=0.07,
     window=2.5,
     bounds=None,
+    max_height=None,
 ):
     """
     Classify ground points using PDAL SMRF filter. https://pdal.io/en/stable/stages/filters.smrf.html
@@ -87,15 +94,24 @@ def classify_ground(
             canopy diameter).
         bounds (str, optional): Optional bounds to crop the input LAS
             (e.g., "([xmin,xmax],[ymin,ymax])").
+        max_height (float, optional): Drop returns more than this many
+            meters above the nearest ground point after classification. A
+            stray airborne return above a crown otherwise becomes the
+            tallest cell of the surface model and can be snapped to as a
+            tree top; a few times the tallest plant (6 m for hazelnut
+            bushes) removes it without touching real canopy.
     Returns:
         None
     """
     logging.info("Classifying ground points with SMRF...")
-    readers_las = {"type": "readers.las", "filename": input_las}
+    ground_pipeline = [{"type": "readers.las", "filename": input_las}]
     if bounds:
-        readers_las["bounds"] = bounds
-    ground_pipeline = [
-        readers_las,
+        ground_pipeline.append(crop_stage(bounds))
+    ground_pipeline += [
+        # low noise (returns below the ground) would pull the ground
+        # surface down under SMRF; flag and drop it first
+        {"type": "filters.elm"},
+        {"type": "filters.range", "limits": "Classification![7:7]"},
         {
             "type": "filters.smrf",
             "scalar": scalar,
@@ -103,8 +119,16 @@ def classify_ground(
             "threshold": threshold,
             "window": window,
         },
-        {"type": "writers.las", "filename": output_las},
     ]
+    if max_height is not None:
+        ground_pipeline += [
+            {"type": "filters.hag_nn"},
+            {
+                "type": "filters.range",
+                "limits": f"HeightAboveGround[:{max_height}]",
+            },
+        ]
+    ground_pipeline.append({"type": "writers.las", "filename": output_las})
     run_pdal_pipeline(ground_pipeline)
     logging.info(f"Classified LAS saved to {output_las}")
 
@@ -149,11 +173,10 @@ def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
     if res is None:
         res = estimate_point_spacing(classified_las)
     logging.info(f"DTM resolution: {res * 100:.3f} cm")
-    readers_las = {"type": "readers.las", "filename": classified_las}
+    dtm_pipeline = [{"type": "readers.las", "filename": classified_las}]
     if bounds:
-        readers_las["bounds"] = bounds
-    dtm_pipeline = [
-        readers_las,
+        dtm_pipeline.append(crop_stage(bounds))
+    dtm_pipeline += [
         {"type": "filters.range", "limits": "Classification[2:2]"},
         {
             "type": "writers.gdal",
@@ -188,11 +211,10 @@ def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
     if res is None:
         res = estimate_point_spacing(classified_las)
     logging.info(f"DSM resolution: {res * 100:.3f} cm")
-    readers_las = {"type": "readers.las", "filename": classified_las}
+    dsm_pipeline = [{"type": "readers.las", "filename": classified_las}]
     if bounds:
-        readers_las["bounds"] = bounds
-    dsm_pipeline = [
-        readers_las,
+        dsm_pipeline.append(crop_stage(bounds))
+    dsm_pipeline += [
         {"type": "filters.range", "limits": "ReturnNumber[1:1]"},
         {
             "type": "writers.gdal",
@@ -268,7 +290,9 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
     return chm
 
 
-def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
+def preprocess_lidar(
+    input_las, output_dir, res=None, extent_shapefile=None, max_height=None
+):
     """
     Run all preprocessing steps and return file paths.
     Args:
@@ -277,6 +301,8 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
         res (float, optional): Raster resolution in meters (default 0.25).
         extent_shapefile (str, optional): Path to extent shapefile for
             cropping/masking.
+        max_height (float, optional): Drop returns more than this far above
+            the ground before building the surfaces; see classify_ground.
     Returns:
         dict: {
             "classified_las": path to ground-classified LAS,
@@ -299,7 +325,9 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
     if extent_shapefile:
         bounds = get_bounds_from_shapefile(extent_shapefile)
 
-    classify_ground(input_las, ground_las, bounds=bounds)
+    classify_ground(
+        input_las, ground_las, bounds=bounds, max_height=max_height
+    )
 
     if res is None:
         res = estimate_point_spacing(ground_las)

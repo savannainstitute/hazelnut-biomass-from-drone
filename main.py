@@ -38,6 +38,14 @@ def main():
         help='Allometry method: lidar or sfm',
     )
     parser.add_argument(
+        '--max-height',
+        type=float,
+        default=None,
+        help='Drop returns more than this many meters above the ground '
+        'before building the surfaces, so a stray airborne return cannot '
+        'become a tree top; a few times the tallest plant, 6 for hazelnut',
+    )
+    parser.add_argument(
         '--snap-radius',
         type=float,
         default=1.75,
@@ -60,6 +68,7 @@ def main():
         args.output_dir,
         res=args.res,
         extent_shapefile=args.extent_shapefile,
+        max_height=args.max_height,
     )
     chm_path = pre["chm"]
     print(f"CHM created at: {chm_path}")
