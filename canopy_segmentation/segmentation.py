@@ -92,56 +92,64 @@ def meters_to_pixels(distance_meters, res_m_per_px):
     return int(round(distance_meters / res_m_per_px))
 
 
-# Largest snap radius used when none is given: the fixed radius this
-# pipeline used before the radius was derived from seed spacing.
-MAX_SNAP_RADIUS_M = 1.75
-
-
-def snap_radius_px_from_spacing(gdf, res_m_per_px):
+def snap_radii_px_from_spacing(gdf, res_m_per_px):
     """
-    Derive the snap radius in pixels from the spacing of the seed points.
+    Derive each seed's snap radius in pixels from the seed spacing.
 
-    The radius is half the smallest distance between any two seeds, less
-    one pixel, rounded down, and never more than MAX_SNAP_RADIUS_M. Two
-    seeds are then always more than two radii apart on the pixel grid, so
-    their search disks cannot share a pixel. A single seed gets
-    MAX_SNAP_RADIUS_M.
+    A seed's radius is half the distance to its nearest neighboring seed,
+    less one pixel, rounded down. Any two seeds are then more than the sum
+    of their radii apart on the pixel grid, so their search disks cannot
+    share a pixel. This relies on every plant having a seed.
 
     Args:
         gdf (GeoDataFrame): Seed points in the CHM CRS.
         res_m_per_px (float): Raster resolution in meters per pixel.
 
     Raises:
-        ValueError: If the two closest seeds are too close to leave a
-            radius of at least one pixel. Fix the seeds, or pass
-            buffer_meters to refine_tree_tops or segment_canopies.
+        ValueError: If there are fewer than two seeds, or two seeds are too
+            close to leave a radius of at least one pixel. Fix the seeds,
+            or pass buffer_meters to refine_tree_tops or segment_canopies.
 
     Returns:
-        int: Snap radius in pixels.
+        np.ndarray: Snap radius in pixels for each row of gdf.
     """
-    max_radius_px = max(1, int(MAX_SNAP_RADIUS_M / res_m_per_px))
     if len(gdf) < 2:
-        return max_radius_px
+        raise ValueError(
+            "The snap radius cannot be derived from fewer than two seeds; "
+            "pass buffer_meters."
+        )
     coords = np.column_stack([gdf.geometry.x, gdf.geometry.y])
     dist, neighbor = cKDTree(coords).query(coords, k=2)
-    first = int(np.argmin(dist[:, 1]))
-    second = int(neighbor[first, 1])
-    spacing = float(dist[first, 1])
-    radius_px = int(np.floor(spacing / (2 * res_m_per_px) - 1))
-    if radius_px < 1:
+    radii_px = np.floor(dist[:, 1] / (2 * res_m_per_px) - 1).astype(int)
+    too_close = np.flatnonzero(radii_px < 1)
+    if too_close.size:
+        labels = gdf.index.tolist()
+        pairs = sorted(
+            {
+                tuple(sorted((labels[i], labels[neighbor[i, 1]])))
+                for i in too_close
+            }
+        )
         raise ValueError(
-            f"Seeds {gdf.index[first]} and {gdf.index[second]} are "
-            f"{spacing:.3f} m apart, too close to derive a snap radius at "
+            f"Seed pairs {pairs} are too close to derive a snap radius at "
             f"{res_m_per_px:.3f} m per pixel; fix the seeds or pass "
             "buffer_meters."
         )
-    radius_px = min(radius_px, max_radius_px)
     logging.info(
-        f"Snap radius from seed spacing: {radius_px * res_m_per_px:.3f} m "
-        f"(closest seeds {gdf.index[first]} and {gdf.index[second]}, "
-        f"{spacing:.3f} m apart)"
+        "Snap radius from seed spacing: "
+        f"{radii_px.min() * res_m_per_px:.3f} to "
+        f"{radii_px.max() * res_m_per_px:.3f} m"
     )
-    return radius_px
+    return radii_px
+
+
+def disk_mask(radius_px):
+    """
+    Return a boolean array of side 2 * radius_px + 1 that is True within
+    radius_px pixels of its center.
+    """
+    offsets = np.arange(-radius_px, radius_px + 1)
+    return offsets[:, None] ** 2 + offsets[None, :] ** 2 <= radius_px**2
 
 
 def refine_tree_tops(
@@ -155,8 +163,9 @@ def refine_tree_tops(
         profile (dict): Rasterio profile.
         shapefile_path (str): Path to input marker shapefile.
         buffer_meters (float, optional): Radius in meters of the disk
-            searched for the local maximum. If None, derived from the seed
-            spacing; see snap_radius_px_from_spacing.
+            searched for the local maximum, the same for every seed. If
+            None, each seed's radius is derived from the seed spacing; see
+            snap_radii_px_from_spacing.
         extent_gdf (GeoDataFrame, optional): Extent geometry for filtering.
 
     Raises:
@@ -174,25 +183,33 @@ def refine_tree_tops(
     gdf = gpd.read_file(shapefile_path)
     if gdf.crs != profile["crs"]:
         gdf = gdf.to_crs(profile["crs"])
-    if extent_gdf is not None:
-        gdf = gdf[gdf.geometry.within(extent_gdf.geometry.union_all())]
     transform = profile["transform"]
     res_m_per_px = float((abs(transform.a) + abs(transform.e)) / 2.0)
     skipped = 0
-    if len(gdf) == 0:
+    in_extent = np.ones(len(gdf), dtype=bool)
+    if extent_gdf is not None:
+        in_extent = gdf.geometry.within(
+            extent_gdf.geometry.union_all()
+        ).to_numpy()
+    if not in_extent.any():
         logging.error("No valid refined tree tops found.")
         return None, None, None, None
+    # Radii come from every seed, so a seed just outside the extent still
+    # limits the search of its neighbor inside it.
     if buffer_meters is None:
-        base_buf_px = snap_radius_px_from_spacing(gdf, res_m_per_px)
+        radii_px = snap_radii_px_from_spacing(gdf, res_m_per_px)
     else:
-        base_buf_px = max(1, meters_to_pixels(buffer_meters, res_m_per_px))
-    offsets = np.arange(-base_buf_px, base_buf_px + 1)
-    disk = offsets[:, None] ** 2 + offsets[None, :] ** 2 <= base_buf_px**2
+        radii_px = np.full(
+            len(gdf), max(1, meters_to_pixels(buffer_meters, res_m_per_px))
+        )
+    gdf = gdf[in_extent]
+    radii_px = radii_px[in_extent]
+    disks = {int(radius): disk_mask(int(radius)) for radius in set(radii_px)}
     seed_at_pixel = {}
     refined_rows = []
     refined_cols = []
     refined_indices = []
-    for idx, row in gdf.iterrows():
+    for (idx, row), base_buf_px in zip(gdf.iterrows(), radii_px.tolist()):
         pt = row.geometry
         r, c = rowcol(transform, pt.x, pt.y)
         r = int(r)
@@ -205,7 +222,7 @@ def refine_tree_tops(
         cmin = max(0, c - base_buf_px)
         cmax = min(chm.shape[1], c + base_buf_px + 1)
         window = chm[rmin:rmax, cmin:cmax]
-        window_disk = disk[
+        window_disk = disks[base_buf_px][
             rmin - r + base_buf_px : rmax - r + base_buf_px,
             cmin - c + base_buf_px : cmax - c + base_buf_px,
         ]

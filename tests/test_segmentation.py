@@ -64,27 +64,29 @@ def seeds_gdf(coords):
     return gpd.GeoDataFrame(geometry=[Point(x, y) for x, y in coords], crs=CRS)
 
 
-def test_snap_radius_is_half_the_smallest_spacing_less_one_pixel():
+def test_each_seed_gets_half_its_nearest_neighbor_distance_less_a_pixel():
     seeds = seeds_gdf([(0.0, 0.0), (3.05, 0.0), (10.0, 5.0)])
-    # 3.05 m / (2 * 0.1 m) - 1 = 14.25 pixels, rounded down
-    assert segmentation.snap_radius_px_from_spacing(seeds, RES) == 14
+    radii = segmentation.snap_radii_px_from_spacing(seeds, RES)
+    # 3.05 m / (2 * 0.1 m) - 1 = 14.25 pixels for the close pair; the
+    # third seed is 8.56 m from its nearest neighbor: 42.8 - 1 = 41.8
+    assert radii.tolist() == [14, 14, 41]
 
 
-def test_snap_radius_is_capped_for_widely_spaced_seeds():
-    seeds = seeds_gdf([(0.0, 0.0), (30.0, 0.0)])
-    # MAX_SNAP_RADIUS_M of 1.75 m at 0.1 m per pixel
-    assert segmentation.snap_radius_px_from_spacing(seeds, RES) == 17
+def test_one_close_pair_does_not_shrink_the_other_seeds():
+    seeds = seeds_gdf([(0.0, 0.0), (0.5, 0.0), (10.0, 0.0), (14.0, 0.0)])
+    radii = segmentation.snap_radii_px_from_spacing(seeds, RES)
+    assert radii.tolist() == [1, 1, 19, 19]
 
 
-def test_single_seed_gets_the_capped_radius():
-    seeds = seeds_gdf([(0.0, 0.0)])
-    assert segmentation.snap_radius_px_from_spacing(seeds, RES) == 17
+def test_snap_radius_needs_two_seeds():
+    with pytest.raises(ValueError, match="buffer_meters"):
+        segmentation.snap_radii_px_from_spacing(seeds_gdf([(0.0, 0.0)]), RES)
 
 
-def test_snap_radius_names_seeds_that_are_too_close():
+def test_snap_radius_names_seed_pairs_that_are_too_close():
     seeds = seeds_gdf([(0.0, 0.0), (0.15, 0.0), (10.0, 5.0)])
-    with pytest.raises(ValueError, match="Seeds 0 and 1"):
-        segmentation.snap_radius_px_from_spacing(seeds, RES)
+    with pytest.raises(ValueError, match=r"Seed pairs \[\(0, 1\)\]"):
+        segmentation.snap_radii_px_from_spacing(seeds, RES)
 
 
 def test_derived_radius_keeps_each_seed_on_its_own_bush(tmp_path):
@@ -225,6 +227,25 @@ def test_extent_keeps_only_the_seeds_inside_it(tmp_path):
     assert sorted(written.max_h) == pytest.approx([1.5, 1.8])
 
 
+def test_seed_outside_the_extent_still_limits_its_neighbors_radius(tmp_path):
+    chm = np.zeros((100, 100))
+    add_cone(chm, 50, 30, 6, 2.0)  # tall bush, seeded, outside the extent
+    add_cone(chm, 50, 50, 6, 1.0)  # short bush, seeded, inside the extent
+    chm_path = write_chm(tmp_path / "planted_chm.tif", chm)
+    seeds = write_seeds(tmp_path / "seeds.shp", [(50, 30), (50, 50)])
+    # covers columns 40 to 100, so only the short bush's seed is inside
+    extent = str(tmp_path / "extent.shp")
+    gpd.GeoDataFrame(
+        geometry=[box(500004.0, 3999990.0, 500010.0, 4000000.0)], crs=CRS
+    ).to_file(extent)
+    segmentation.segment_canopies(
+        chm_path, seeds, str(tmp_path), extent_shapefile=extent
+    )
+    written = gpd.read_file(tmp_path / "planted_segments.shp")
+    assert written.plant.tolist() == ["plant_1"]
+    assert written.max_h.iloc[0] == pytest.approx(1.0)
+
+
 def test_crown_crossing_the_extent_boundary_is_kept_whole(tmp_path):
     chm = np.zeros((100, 100))
     add_cone(chm, 50, 50, 8, 1.5)
@@ -236,7 +257,11 @@ def test_crown_crossing_the_extent_boundary_is_kept_whole(tmp_path):
         geometry=[box(500004.75, 3999990.0, 500010.0, 4000000.0)], crs=CRS
     ).to_file(extent)
     segmentation.segment_canopies(
-        chm_path, seeds, str(tmp_path), extent_shapefile=extent
+        chm_path,
+        seeds,
+        str(tmp_path),
+        extent_shapefile=extent,
+        buffer_meters=0.5,
     )
     written = gpd.read_file(tmp_path / "planted_segments.shp")
     crown_px = int((chm > 0).sum())

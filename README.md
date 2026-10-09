@@ -125,7 +125,7 @@ python main.py `
 
 ### Stage 2: Canopy Segmentation (`canopy_segmentation/segmentation.py`)
 
-1. Marker refinement: Each input tree-top point is snapped to the CHM local maximum within a disk around it. The disk radius is half the smallest distance between any two markers, less one pixel, so two markers can never snap to the same pixel; it is never more than 1.75 m. `refine_tree_tops` and `segment_canopies` accept `buffer_meters` to set the radius explicitly; if two markers then snap to the same pixel the run stops and names them.
+1. Marker refinement: Each input tree-top point is snapped to the CHM local maximum within a disk around it. Each marker's disk radius is half the distance to its nearest neighboring marker, less one pixel, so two markers can never snap to the same pixel. This relies on every plant in the scene having a marker; an unmarked plant inside a marker's disk can capture it. `refine_tree_tops` and `segment_canopies` accept `buffer_meters` to set the radius explicitly; if two markers then snap to the same pixel the run stops and names them.
 2. Watershed segmentation: Runs scikit-image's `watershed` on the inverted, Gaussian-smoothed CHM (sigma=0.5), using the refined markers as seeds. Only pixels with CHM > 0.1 m are included in the segmentation mask.
 3. Tree-top update: Each refined marker is moved to the highest CHM pixel of its own segment, so a tree top's `height` is the maximum height of its canopy polygon (`max_h`).
 4. Polygon extraction: Each segment label is converted to a polygon. Small holes (< 8 px) are filled; small objects (< 8 px) are removed. A segment left in several pieces is written as one multipart polygon.
