@@ -11,3 +11,4 @@ notebooks/density_exploration.ipynb
 /CLAUDE.md
 /__pycache__
 /.vscode
+*.pyc
