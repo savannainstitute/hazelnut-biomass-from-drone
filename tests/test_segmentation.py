@@ -125,6 +125,24 @@ def test_snap_search_is_a_disk_not_a_square(tmp_path):
     assert refined.height.iloc[0] == pytest.approx(0.4)
 
 
+def test_tree_top_is_the_highest_pixel_of_its_polygon(tmp_path):
+    chm = np.zeros((100, 100))
+    add_cone(chm, 50, 50, 12, 2.0)
+    chm_path = write_chm(tmp_path / "planted_chm.tif", chm)
+    # a seed 1.0 m from the peak, snapped within 0.5 m, cannot reach it
+    seeds = write_seeds(tmp_path / "seeds.shp", [(50, 40)])
+    segmentation.segment_canopies(
+        chm_path, seeds, str(tmp_path), buffer_meters=0.5
+    )
+    tops = gpd.read_file(tmp_path / "planted_treetops.shp")
+    written = gpd.read_file(tmp_path / "planted_segments.shp")
+    peak = Point(*rasterio.transform.xy(TRANSFORM, 50, 50))
+    assert tops.geometry.iloc[0].distance(peak) == pytest.approx(0.0)
+    assert tops.height.iloc[0] == pytest.approx(2.0)
+    assert written.max_h.iloc[0] == pytest.approx(2.0)
+    assert "height" not in written.columns
+
+
 def test_nodata_beside_a_marker_does_not_hand_its_crown_to_a_neighbor():
     chm = np.zeros((60, 80))
     add_cone(chm, 30, 30, 10, 2.0)

@@ -127,14 +127,15 @@ python main.py `
 
 1. Marker refinement: Each input tree-top point is snapped to the CHM local maximum within a disk around it. The disk radius is half the smallest distance between any two markers, less one pixel, so two markers can never snap to the same pixel; it is never more than 1.75 m. `refine_tree_tops` and `segment_canopies` accept `buffer_meters` to set the radius explicitly; if two markers then snap to the same pixel the run stops and names them.
 2. Watershed segmentation: Runs scikit-image's `watershed` on the inverted, Gaussian-smoothed CHM (sigma=0.5), using the refined markers as seeds. Only pixels with CHM > 0.1 m are included in the segmentation mask.
-3. Polygon extraction: Each segment label is converted to a polygon. Small holes (< 8 px) are filled; small objects (< 8 px) are removed. A segment left in several pieces is written as one multipart polygon.
+3. Tree-top update: Each refined marker is moved to the highest CHM pixel of its own segment, so a tree top's `height` is the maximum height of its canopy polygon (`max_h`).
+4. Polygon extraction: Each segment label is converted to a polygon. Small holes (< 8 px) are filled; small objects (< 8 px) are removed. A segment left in several pieces is written as one multipart polygon.
 
 #### Outputs
 
 | File | Description |
 |---|---|
-| `{prefix}_treetops.shp` | Refined tree-top point locations with `tree_id` and `height` attributes |
-| `{prefix}_segments.shp` | Canopy polygons with `tree_id`, `area_m2`, `max_h` (m), `mean_h` (m) |
+| `{prefix}_treetops.shp` | Tree-top point locations (the highest pixel of each canopy polygon) with `tree_id` and `height` attributes |
+| `{prefix}_segments.shp` | Canopy polygons with `tree_id`, `area_m2`, `max_h` (m), `mean_h` (m), plus the marker shapefile's own attributes. `max_h` is the bush height. |
 
 ---
 

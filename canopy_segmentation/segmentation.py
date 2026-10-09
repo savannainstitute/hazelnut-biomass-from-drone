@@ -382,6 +382,53 @@ def marker_watershed(
     return segments
 
 
+def move_tree_tops_to_segment_max(refined_gdf, segments, chm, profile):
+    """
+    Move each tree top to the highest CHM pixel of its own segment.
+
+    The snap in refine_tree_tops only searches near the seed, while the
+    segment grown from it can reach a higher pixel. After this step a tree
+    top's height is the maximum height of its canopy polygon (max_h). A
+    tree top with no segment keeps its snapped position and height.
+
+    Args:
+        refined_gdf (GeoDataFrame): Tree tops from refine_tree_tops, with
+            tree_id and height.
+        segments (np.ndarray): Segmented label array from marker_watershed.
+        chm (np.ndarray): CHM raster array.
+        profile (dict): Rasterio profile.
+
+    Returns:
+        GeoDataFrame: Copy of refined_gdf with geometry and height updated.
+    """
+    transform = profile["transform"]
+    windows = ndimage.find_objects(segments)
+    points = list(refined_gdf.geometry)
+    heights = list(refined_gdf["height"])
+    for i, tree_id in enumerate(refined_gdf["tree_id"]):
+        window = windows[tree_id - 1] if tree_id <= len(windows) else None
+        if window is None:
+            continue
+        in_segment = segments[window] == tree_id
+        segment_chm = np.where(in_segment, chm[window], np.nan)
+        if not np.isfinite(segment_chm).any():
+            continue
+        r, c = np.unravel_index(np.nanargmax(segment_chm), segment_chm.shape)
+        points[i] = Point(
+            xy(
+                transform,
+                window[0].start + int(r),
+                window[1].start + int(c),
+                offset="center",
+            )
+        )
+        heights[i] = segment_chm[r, c]
+    moved = refined_gdf.copy()
+    moved["geometry"] = points
+    moved["height"] = heights
+    return moved
+
+
 def save_refined_tree_tops(refined_gdf, profile, output_dir):
     """
     Save the refined tree/bush top points as a shapefile.
@@ -505,10 +552,11 @@ def save_segments(
                 "mean_h": stats[i][2],
             }
             if isinstance(attrs, dict):
-                # Only update non-geometry attributes to avoid overwriting
-                # the polygon geometry
+                # geometry would overwrite the polygon; max_h is the height
                 attrs_no_geom = {
-                    k: v for k, v in attrs.items() if k != "geometry"
+                    k: v
+                    for k, v in attrs.items()
+                    if k not in ("geometry", "height")
                 }
                 row.update(attrs_no_geom)
             data.append(row)
@@ -633,6 +681,9 @@ def segment_canopies(
         return None
     if output_dir is None:
         output_dir = os.path.dirname(chm_path) or "."
+    refined_gdf = move_tree_tops_to_segment_max(
+        refined_gdf, segments, chm, profile
+    )
     save_segments(
         segments,
         chm,
