@@ -54,13 +54,48 @@ def run_pdal_pipeline(pipeline_json):
         os.remove(pipeline_path)
 
 
-def get_bounds_from_shapefile(shapefile_path):
+# The SMRF window default, documented as the largest canopy diameter.
+MAX_CANOPY_DIAMETER_M = 2.5
+
+
+def get_crop_polygon_wkt(shapefile_path, las_path, margin_m=0.0):
     """
-    Returns PDAL bounds string from a shapefile.
+    Return the extent polygon as WKT in the CRS of the LAS file.
+
+    All features in the shapefile are unioned into one geometry and
+    reprojected to the LAS CRS when the two differ.
+
+    Args:
+        shapefile_path (str): Path to the extent polygon shapefile.
+        las_path (str): Path to the LAS file the polygon will crop.
+        margin_m (float): Distance in meters to grow the polygon by, so a
+            bush seeded just inside the extent keeps the points of its
+            whole crown.
+
+    Raises:
+        ValueError: If the shapefile or the LAS file has no CRS. Assign one
+            with geopandas `set_crs` or PDAL `filters.assign` first.
+
+    Returns:
+        str: WKT of the extent polygon in the LAS CRS.
     """
     gdf = gpd.read_file(shapefile_path)
-    minx, miny, maxx, maxy = gdf.total_bounds
-    return f"([{minx},{maxx}],[{miny},{maxy}])"
+    if gdf.crs is None:
+        raise ValueError(
+            f"Extent shapefile has no CRS: {shapefile_path}. Assign one "
+            "with geopandas set_crs before cropping."
+        )
+    with laspy.open(las_path) as las:
+        las_crs = las.header.parse_crs()
+    if las_crs is None:
+        raise ValueError(
+            f"LAS file has no CRS: {las_path}. Assign one with PDAL "
+            "filters.assign before cropping."
+        )
+    if gdf.crs != las_crs:
+        logging.info(f"Reprojecting extent from {gdf.crs} to the LAS CRS")
+        gdf = gdf.to_crs(las_crs)
+    return gdf.geometry.union_all().buffer(margin_m).wkt
 
 
 def classify_ground(
@@ -69,8 +104,8 @@ def classify_ground(
     scalar=1.2,
     slope=0.15,
     threshold=0.07,
-    window=2.5,
-    bounds=None,
+    window=MAX_CANOPY_DIAMETER_M,
+    crop_polygon=None,
 ):
     """
     Classify ground points using PDAL SMRF filter. https://pdal.io/en/stable/stages/filters.smrf.html
@@ -85,17 +120,19 @@ def classify_ground(
             classification.
         window (float): Neighborhood window size in meters (suggested: max
             canopy diameter).
-        bounds (str, optional): Optional bounds to crop the input LAS
-            (e.g., "([xmin,xmax],[ymin,ymax])").
+        crop_polygon (str, optional): WKT polygon in the LAS CRS. Points
+            outside it are dropped before classification; see
+            get_crop_polygon_wkt.
     Returns:
         None
     """
     logging.info("Classifying ground points with SMRF...")
-    readers_las = {"type": "readers.las", "filename": input_las}
-    if bounds:
-        readers_las["bounds"] = bounds
-    ground_pipeline = [
-        readers_las,
+    ground_pipeline = [{"type": "readers.las", "filename": input_las}]
+    if crop_polygon:
+        ground_pipeline.append(
+            {"type": "filters.crop", "polygon": crop_polygon}
+        )
+    ground_pipeline += [
         {
             "type": "filters.smrf",
             "scalar": scalar,
@@ -130,7 +167,7 @@ def estimate_point_spacing(las_path):
         return spacing
 
 
-def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
+def create_dtm(classified_las, dtm_tif, res=None):
     """
     Create Digital Terrain Model (DTM) from ground-classified LAS. Uses
     inverse-distance weighting
@@ -140,8 +177,6 @@ def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
         dtm_tif (str): Output path for DTM GeoTIFF.
         res (float, optional): Raster resolution in meters. If None,
             estimated from point spacing.
-        bounds (str, optional): Optional bounds to crop the input LAS
-            (e.g., "([xmin,xmax],[ymin,ymax])").
     Returns:
         None
     """
@@ -149,11 +184,8 @@ def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
     if res is None:
         res = estimate_point_spacing(classified_las)
     logging.info(f"DTM resolution: {res * 100:.3f} cm")
-    readers_las = {"type": "readers.las", "filename": classified_las}
-    if bounds:
-        readers_las["bounds"] = bounds
     dtm_pipeline = [
-        readers_las,
+        {"type": "readers.las", "filename": classified_las},
         {"type": "filters.range", "limits": "Classification[2:2]"},
         {
             "type": "writers.gdal",
@@ -170,7 +202,7 @@ def create_dtm(classified_las, dtm_tif, res=None, bounds=None):
     logging.info(f"DTM saved to {dtm_tif}")
 
 
-def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
+def create_dsm(classified_las, dsm_tif, res=None):
     """
     Create Digital Surface Model (DSM) from ground-classified LAS.
 
@@ -179,8 +211,6 @@ def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
         dsm_tif (str): Output path for DSM GeoTIFF.
         res (float, optional): Raster resolution in meters. If None,
             estimated from point spacing.
-        bounds (str, optional): Optional bounds to crop the input LAS
-            (e.g., "([xmin,xmax],[ymin,ymax])").
     Returns:
         None
     """
@@ -188,11 +218,8 @@ def create_dsm(classified_las, dsm_tif, res=None, bounds=None):
     if res is None:
         res = estimate_point_spacing(classified_las)
     logging.info(f"DSM resolution: {res * 100:.3f} cm")
-    readers_las = {"type": "readers.las", "filename": classified_las}
-    if bounds:
-        readers_las["bounds"] = bounds
     dsm_pipeline = [
-        readers_las,
+        {"type": "readers.las", "filename": classified_las},
         {"type": "filters.range", "limits": "ReturnNumber[1:1]"},
         {
             "type": "writers.gdal",
@@ -218,26 +245,33 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
         dtm_tif (str): Path to DTM GeoTIFF.
         chm_tif (str): Output path for CHM GeoTIFF.
     Returns:
-        np.ndarray: CHM array (DSM - DTM).
+        np.ndarray: CHM array (DSM - DTM), NaN where either input has no
+            data.
     """
     logging.info("Creating CHM...")
     with rasterio.open(dsm_tif) as dsm_src, rasterio.open(dtm_tif) as dtm_src:
-        dsm = dsm_src.read(1)
-        dtm = dtm_src.read(1)
+        dsm = dsm_src.read(1).astype('float64')
+        dtm = dtm_src.read(1).astype('float64')
+        if dsm_src.nodata is not None:
+            dsm[dsm == dsm_src.nodata] = np.nan
+        if dtm_src.nodata is not None:
+            dtm[dtm == dtm_src.nodata] = np.nan
 
         # Align DTM to DSM if needed
         if (dsm.shape != dtm.shape) or (
             dsm_src.transform != dtm_src.transform
         ):
             logging.info("Aligning DTM to DSM before calculating...")
-            aligned_dtm = np.empty_like(dsm)
+            aligned_dtm = np.full(dsm.shape, np.nan)
             reproject(
                 source=dtm,
                 destination=aligned_dtm,
                 src_transform=dtm_src.transform,
                 src_crs=dtm_src.crs,
+                src_nodata=np.nan,
                 dst_transform=dsm_src.transform,
                 dst_crs=dsm_src.crs,
+                dst_nodata=np.nan,
                 resampling=Resampling.bilinear,
             )
             logging.info("DTM aligned to DSM.")
@@ -245,8 +279,14 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
 
         chm = dsm - dtm
         chm[chm < 0] = 0  # Remove negative values
+        n_nodata = int(np.isnan(chm).sum())
+        if n_nodata:
+            logging.info(
+                f"{n_nodata} CHM cells have no DSM or DTM value and are "
+                "written as nodata"
+            )
         meta = dsm_src.meta.copy()
-        meta.update(dtype='float32', compress='lzw')
+        meta.update(dtype='float32', compress='lzw', nodata=np.nan)
         with rasterio.open(chm_tif, 'w', **meta) as dst:
             dst.write(chm.astype('float32'), 1)
     logging.info(f"CHM saved to {chm_tif}")
@@ -260,8 +300,8 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
         input_las (str): Path to input LAS file.
         output_dir (str): Output directory for all results.
         res (float, optional): Raster resolution in meters (default 0.25).
-        extent_shapefile (str, optional): Path to extent shapefile for
-            cropping/masking.
+        extent_shapefile (str, optional): Path to extent shapefile. The
+            cloud is cropped to it grown by MAX_CANOPY_DIAMETER_M.
     Returns:
         dict: {
             "classified_las": path to ground-classified LAS,
@@ -280,17 +320,21 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
     dsm_tif = os.path.join(output_dir, f"{prefix}_dsm.tif")
     chm_tif = os.path.join(output_dir, f"{prefix}_chm.tif")
 
-    bounds = None
+    crop_polygon = None
     if extent_shapefile:
-        bounds = get_bounds_from_shapefile(extent_shapefile)
+        crop_polygon = get_crop_polygon_wkt(
+            extent_shapefile, input_las, margin_m=MAX_CANOPY_DIAMETER_M
+        )
 
-    classify_ground(input_las, ground_las, bounds=bounds)
+    classify_ground(input_las, ground_las, crop_polygon=crop_polygon)
 
     if res is None:
-        res = estimate_point_spacing(ground_las)
+        # A cropped cloud keeps a bounding-box header, which understates
+        # its density, so a cropped run takes the spacing from the input.
+        res = estimate_point_spacing(input_las if crop_polygon else ground_las)
 
-    create_dtm(ground_las, dtm_tif, res, bounds=bounds)
-    create_dsm(ground_las, dsm_tif, res, bounds=bounds)
+    create_dtm(ground_las, dtm_tif, res)
+    create_dsm(ground_las, dsm_tif, res)
     chm = create_chm(dsm_tif, dtm_tif, chm_tif)
 
     return {

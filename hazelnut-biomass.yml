@@ -12,9 +12,10 @@ dependencies:
   - matplotlib
   - numpy
   - pandas
+  - pytest
   - rasterio
   - ruff
-  - scikit-image
+  - scikit-image>=0.26
   - scikit-learn
   - scipy
   - shapely
