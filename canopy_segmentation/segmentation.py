@@ -17,8 +17,10 @@ import numpy as np
 import rasterio
 from rasterio import mask as rio_mask
 from rasterio.features import rasterize, shapes
-from rasterio.transform import rowcol, xy
+from rasterio.transform import Affine, rowcol, xy
+from scipy import ndimage
 from shapely.geometry import Point, shape
+from shapely.ops import unary_union
 from skimage.filters import gaussian
 from skimage.morphology import remove_small_holes, remove_small_objects
 from skimage.segmentation import watershed
@@ -179,11 +181,19 @@ def refine_tree_tops(
     if gdf.crs != profile["crs"]:
         gdf = gdf.to_crs(profile["crs"])
     if extent_gdf is not None:
-        gdf = gdf[gdf.geometry.within(extent_gdf.unary_union)]
+        gdf = gdf[gdf.geometry.within(extent_gdf.geometry.union_all())]
     transform = profile["transform"]
     res_m_per_px = float((abs(transform.a) + abs(transform.e)) / 2.0)
     skipped = 0
+    collisions = 0
     base_buf_px = max(1, meters_to_pixels(buffer_meters, res_m_per_px))
+    # A disk, not a square: a square of half-width r reaches r * sqrt(2)
+    # along its diagonal, so the snap could land 2.47 m away for r = 1.75.
+    yy, xx = np.ogrid[
+        -base_buf_px : base_buf_px + 1, -base_buf_px : base_buf_px + 1
+    ]
+    disk = (yy**2 + xx**2) <= base_buf_px**2
+    occupied = set()
     refined_rows = []
     refined_cols = []
     refined_indices = []
@@ -200,18 +210,42 @@ def refine_tree_tops(
         cmin = max(0, c - base_buf_px)
         cmax = min(chm.shape[1], c + base_buf_px + 1)
         window = chm[rmin:rmax, cmin:cmax]
-        finite_mask = np.isfinite(window)
+        dwin = disk[
+            rmin - (r - base_buf_px) : rmax - (r - base_buf_px),
+            cmin - (c - base_buf_px) : cmax - (c - base_buf_px),
+        ]
+        finite_mask = np.isfinite(window) & dwin
         if not np.any(finite_mask):
             skipped += 1
             continue
-        local = np.where(finite_mask, window, -np.inf)
-        max_idx = np.argmax(local)
-        max_local_idx = np.unravel_index(max_idx, local.shape)
-        max_r = rmin + max_local_idx[0]
-        max_c = cmin + max_local_idx[1]
-        refined_rows.append(max_r)
-        refined_cols.append(max_c)
+        local = np.where(finite_mask, window, -np.inf).ravel()
+        # Highest pixel not already taken by another seed. Two seeds that
+        # snapped to one pixel used to share it, and the second marker
+        # silently overwrote the first, so one bush vanished from the output
+        # while still holding a tree_id.
+        chosen = None
+        for flat in np.argsort(local)[::-1]:
+            if not np.isfinite(local[flat]):
+                break
+            rr, cc = np.unravel_index(flat, window.shape)
+            cand = (rmin + int(rr), cmin + int(cc))
+            if cand not in occupied:
+                chosen = cand
+                break
+            if chosen is None and flat == np.argmax(local):
+                collisions += 1
+        if chosen is None:
+            skipped += 1
+            continue
+        occupied.add(chosen)
+        refined_rows.append(chosen[0])
+        refined_cols.append(chosen[1])
         refined_indices.append(idx)
+    if collisions:
+        logging.warning(
+            f"{collisions} seeds snapped to a pixel another seed already "
+            "held and were moved to their next-highest free pixel"
+        )
     if len(refined_rows) == 0:
         logging.error("No valid refined tree tops found.")
         return None, None, None, None
@@ -240,6 +274,7 @@ def marker_watershed(
     min_height=0.1,
     surface_smooth_sigma=0.5,
     extent_gdf=None,
+    max_radius=None,
 ):
     """
     Perform marker-controlled watershed segmentation on the CHM using only
@@ -252,6 +287,11 @@ def marker_watershed(
         min_height (float): Minimum CHM height to consider.
         surface_smooth_sigma (float): Gaussian smoothing sigma for CHM.
         extent_gdf (GeoDataFrame, optional): Extent geometry for masking.
+        max_radius (float, optional): Keep only pixels within this distance
+            (meters) of the nearest marker. Without it a segment grows along
+            any connected canopy above min_height, so an unseeded neighbor,
+            a hedgerow or tall grass joined to the crown is counted as part
+            of the seeded bush. Set it below half the plant spacing.
 
     Returns:
         np.ndarray: Segmented label array.
@@ -287,6 +327,12 @@ def marker_watershed(
             max(0, r - 1) : min(mask.shape[0], r + 2),
             max(0, c - 1) : min(mask.shape[1], c + 2),
         ] = True
+
+    if max_radius is not None:
+        transform = profile["transform"]
+        res_m_per_px = float((abs(transform.a) + abs(transform.e)) / 2.0)
+        dist_px = ndimage.distance_transform_edt(markers == 0)
+        mask &= dist_px <= max_radius / res_m_per_px
 
     smoothed_chm = gaussian(
         chm, sigma=surface_smooth_sigma, preserve_range=True
@@ -352,40 +398,59 @@ def save_segments(
     os.makedirs(output_dir, exist_ok=True)
     polygons = []
     labels = []
+    stats = []
     transform = profile["transform"]
-    for val in np.unique(segments):
-        if val == 0:
+    pix_area = res_m_per_px**2
+    extent_union = (
+        extent_gdf.geometry.union_all() if extent_gdf is not None else None
+    )
+    # Work inside each label's bounding box rather than over the whole
+    # raster, which is what makes this loop affordable on thousands of
+    # segments.
+    windows = ndimage.find_objects(segments)
+    for lbl, sl in enumerate(windows, start=1):
+        if sl is None:
             continue
-        mask = segments == val
-        mask_clean = remove_small_objects(mask, min_size=min_object_size)
-        mask_clean = remove_small_holes(
-            mask_clean, area_threshold=min_hole_area
+        sub = segments[sl]
+        mask = sub == lbl
+        # scikit-image 0.26 replaced the strict thresholds (min_size,
+        # area_threshold) with an inclusive max_size, so subtract one to keep
+        # the same objects and holes as before.
+        mask_clean = remove_small_objects(mask, max_size=min_object_size - 1)
+        mask_clean = remove_small_holes(mask_clean, max_size=min_hole_area - 1)
+        if not mask_clean.any():
+            continue
+        win_transform = transform * Affine.translation(
+            sl[1].start, sl[0].start
         )
+        parts = []
         for geom, _ in shapes(
-            mask_clean.astype(np.uint8), mask=mask_clean, transform=transform
+            mask_clean.astype(np.uint8),
+            mask=mask_clean,
+            transform=win_transform,
         ):
             poly = shape(geom)
-            if extent_gdf is not None and not poly.within(
-                extent_gdf.unary_union
-            ):
+            if extent_union is not None and not poly.within(extent_union):
                 continue
-            polygons.append(poly)
-            labels.append(int(val))
-            break
-    if len(polygons) == 0:
-        logging.warning("No polygons generated from segments.")
-        return
-    pix_area = res_m_per_px**2
-    stats = []
-    for lbl in labels:
-        mask = segments == lbl
-        area_m2 = np.sum(mask) * pix_area
-        heights = chm[mask]
+            parts.append(poly)
+        if not parts:
+            continue
+        # Every part of the segment is kept. The earlier version wrote only
+        # the first polygon that shapes() returned, so a crown split by a gap
+        # lost its other parts from the geometry (and from the volume
+        # computed on it) while area_m2 still counted them.
+        polygons.append(unary_union(parts))
+        labels.append(int(lbl))
+        heights = chm[sl][mask_clean]
+        area_m2 = float(mask_clean.sum()) * pix_area
         max_h = np.nanmax(heights) if np.any(np.isfinite(heights)) else np.nan
         mean_h = (
             np.nanmean(heights) if np.any(np.isfinite(heights)) else np.nan
         )
         stats.append((area_m2, max_h, mean_h))
+    if len(polygons) == 0:
+        logging.warning("No polygons generated from segments.")
+        return
     if refined_gdf is not None and 'tree_id' in refined_gdf.columns:
         attr_gdf = refined_gdf.set_index('tree_id')
         data = []
@@ -477,6 +542,7 @@ def segment_canopies(
     buffer_meters=1.75,
     surface_smooth_sigma=0.5,
     min_height=0.1,
+    max_radius=None,
 ):
     """
     Full pipeline: Load CHM, refine tree tops, segment canopies, and save
@@ -491,6 +557,8 @@ def segment_canopies(
         buffer_meters (float): Buffer for local maxima search (meters).
         surface_smooth_sigma (float): Gaussian smoothing sigma for CHM.
         min_height (float): Minimum CHM height to consider (meters).
+        max_radius (float, optional): Furthest a segment may reach from its
+            marker (meters); see marker_watershed.
 
     Returns:
         dict: {
@@ -512,11 +580,11 @@ def segment_canopies(
         buffer_meters=buffer_meters,
         extent_gdf=extent_gdf,
     )
-    if extent_gdf is not None:
-        markers = mask_markers_within_extent(markers, profile, extent_gdf)
     if markers is None:
         logging.error("No valid refined tree tops found; exiting.")
         return None
+    if extent_gdf is not None:
+        markers = mask_markers_within_extent(markers, profile, extent_gdf)
     segments = marker_watershed(
         chm,
         markers,
@@ -524,6 +592,7 @@ def segment_canopies(
         min_height=min_height,
         surface_smooth_sigma=surface_smooth_sigma,
         extent_gdf=extent_gdf,
+        max_radius=max_radius,
     )
     if segments is None:
         logging.error("Segmentation failed.")

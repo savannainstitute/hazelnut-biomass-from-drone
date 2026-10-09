@@ -222,15 +222,22 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
     """
     logging.info("Creating CHM...")
     with rasterio.open(dsm_tif) as dsm_src, rasterio.open(dtm_tif) as dtm_src:
-        dsm = dsm_src.read(1)
-        dtm = dtm_src.read(1)
+        dsm = dsm_src.read(1).astype('float64')
+        dtm = dtm_src.read(1).astype('float64')
+        # Nodata cells (PDAL writes -9999 where IDW found no points) must not
+        # enter the subtraction: a DTM hole under a crown would otherwise read
+        # as a canopy about 10,000 m tall, and a DSM hole as 0 m of canopy.
+        if dsm_src.nodata is not None:
+            dsm[dsm == dsm_src.nodata] = np.nan
+        if dtm_src.nodata is not None:
+            dtm[dtm == dtm_src.nodata] = np.nan
 
         # Align DTM to DSM if needed
         if (dsm.shape != dtm.shape) or (
             dsm_src.transform != dtm_src.transform
         ):
             logging.info("Aligning DTM to DSM before calculating...")
-            aligned_dtm = np.empty_like(dsm)
+            aligned_dtm = np.full(dsm.shape, np.nan, dtype='float64')
             reproject(
                 source=dtm,
                 destination=aligned_dtm,
@@ -238,6 +245,8 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
                 src_crs=dtm_src.crs,
                 dst_transform=dsm_src.transform,
                 dst_crs=dsm_src.crs,
+                src_nodata=np.nan,
+                dst_nodata=np.nan,
                 resampling=Resampling.bilinear,
             )
             logging.info("DTM aligned to DSM.")
@@ -245,8 +254,14 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
 
         chm = dsm - dtm
         chm[chm < 0] = 0  # Remove negative values
+        n_hole = int(np.isnan(chm).sum())
+        if n_hole:
+            logging.info(
+                f"{n_hole} CHM cells have no DSM or DTM estimate and are "
+                "written as nodata"
+            )
         meta = dsm_src.meta.copy()
-        meta.update(dtype='float32', compress='lzw')
+        meta.update(dtype='float32', compress='lzw', nodata=np.nan)
         with rasterio.open(chm_tif, 'w', **meta) as dst:
             dst.write(chm.astype('float32'), 1)
     logging.info(f"CHM saved to {chm_tif}")

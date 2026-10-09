@@ -37,6 +37,20 @@ def main():
         default='lidar',
         help='Allometry method: lidar or sfm',
     )
+    parser.add_argument(
+        '--snap-radius',
+        type=float,
+        default=1.75,
+        help='Radius (m) within which a seed snaps to the CHM maximum; keep '
+        'it below half the plant spacing or seeds snap onto neighbors',
+    )
+    parser.add_argument(
+        '--max-radius',
+        type=float,
+        default=None,
+        help='Furthest a segment may reach from its marker (m); without it a '
+        'segment follows any connected canopy, including unseeded plants',
+    )
     args = parser.parse_args()
 
     # Step 1: Preprocess LiDAR
@@ -57,6 +71,8 @@ def main():
         tree_tops_shp=args.tree_tops_shp,
         output_dir=args.output_dir,
         extent_shapefile=args.extent_shapefile,
+        buffer_meters=args.snap_radius,
+        max_radius=args.max_radius,
     )
 
     if seg is None:
