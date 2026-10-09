@@ -125,6 +125,23 @@ def test_snap_search_is_a_disk_not_a_square(tmp_path):
     assert refined.height.iloc[0] == pytest.approx(0.4)
 
 
+def test_nodata_beside_a_marker_does_not_hand_its_crown_to_a_neighbor():
+    chm = np.zeros((60, 80))
+    add_cone(chm, 30, 30, 10, 2.0)
+    add_cone(chm, 30, 48, 10, 1.0)  # crowns overlap between the two tops
+    chm[30, 49] = np.nan  # a nodata cell next to the short bush's top
+    markers = np.zeros(chm.shape, dtype=np.int32)
+    markers[30, 30] = 1
+    markers[30, 48] = 2
+    segments = segmentation.marker_watershed(
+        chm, markers, {"transform": TRANSFORM}
+    )
+    # the short bush keeps the side of its crown facing away from the tall
+    # one: columns 49 to 58 of the row through its top
+    assert (segments[30, 50:58] == 2).all()
+    assert (segments == 2).sum() > 150
+
+
 def save_and_read_segments(tmp_path, segments, chm):
     chm_path = write_chm(tmp_path / "planted_chm.tif", chm)
     profile = {

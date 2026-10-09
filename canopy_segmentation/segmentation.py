@@ -202,7 +202,8 @@ def snap_radius_px_from_spacing(gdf, res_m_per_px):
     radius_px = min(radius_px, max_radius_px)
     logging.info(
         f"Snap radius from seed spacing: {radius_px * res_m_per_px:.3f} m "
-        f"(closest seeds {spacing:.3f} m apart)"
+        f"(closest seeds {gdf.index[first]} and {gdf.index[second]}, "
+        f"{spacing:.3f} m apart)"
     )
     return radius_px
 
@@ -367,10 +368,14 @@ def marker_watershed(
             max(0, c - 1) : min(mask.shape[1], c + 2),
         ] = True
 
+    # Nodata is smoothed as zero height; a NaN would spread to every
+    # pixel within the Gaussian kernel and flatten the surface there.
     smoothed_chm = gaussian(
-        chm, sigma=surface_smooth_sigma, preserve_range=True
+        np.where(np.isfinite(chm), chm, 0.0),
+        sigma=surface_smooth_sigma,
+        preserve_range=True,
     )
-    inv_height = np.where(np.isfinite(smoothed_chm), -smoothed_chm, 0.0)
+    inv_height = -smoothed_chm
 
     segments = watershed(inv_height, markers, connectivity=2, mask=mask)
     logging.info(f"Watershed produced {len(np.unique(segments)) - 1} segments")
