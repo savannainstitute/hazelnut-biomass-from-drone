@@ -73,7 +73,7 @@ Hardware: All processing is CPU-based. No GPU is required. For full-orchard data
 | Tree-top marker shapefile | Point shapefile with one point per hazelnut bush (e.g., from RTK GPS survey or manual digitization over imagery) |
 | Extent shapefile (optional) | Polygon shapefile used to crop/mask all raster and vector outputs to an orchard boundary |
 
-Tree-top markers are required and must be supplied by the user. They are used as watershed seeds. The pipeline refines each marker to the local CHM maximum within a 1.75 m radius.
+Tree-top markers are required and must be supplied by the user. They are used as watershed seeds. The pipeline refines each marker to the local CHM maximum within a snap radius derived from the marker spacing (see Stage 2).
 
 ---
 
@@ -97,7 +97,7 @@ python main.py `
 | `--tree-tops-shp` | Yes | Path to tree-top marker shapefile |
 | `--output-dir` | Yes | Directory for all outputs |
 | `--method` | No | Allometric model: `lidar` (default) or `sfm` |
-| `--extent-shapefile` | No | Polygon shapefile for spatial cropping/masking |
+| `--extent-shapefile` | No | Polygon shapefile for spatial cropping/masking. The point cloud is cropped to the polygon itself, not its bounding box. The shapefile and the LAS file must both have a CRS; the polygon is reprojected to the LAS CRS when they differ. |
 | `--res` | No | Raster resolution in meters (default: auto-estimated from point spacing) |
 
 ---
@@ -109,7 +109,7 @@ python main.py `
 1. Ground classification: Runs PDAL's [SMRF filter](https://pdal.io/en/stable/stages/filters.smrf.html) on the raw LAS file. Default parameters: `scalar=1.2`, `slope=0.15`, `threshold=0.07`, `window=2.5`.
 2. DTM: Rasterizes ground-classified points (LAS class 2) using inverse-distance weighting (IDW, power=2).
 3. DSM: Rasterizes first returns (`ReturnNumber == 1`) using IDW.
-4. CHM: Computed as `DSM − DTM`. Negative values are clamped to zero. If DSM and DTM extents differ, the DTM is bilinearly resampled to match the DSM grid before subtraction.
+4. CHM: Computed as `DSM − DTM`. Negative values are clamped to zero. If DSM and DTM extents differ, the DTM is bilinearly resampled to match the DSM grid before subtraction. Cells where either raster has no data are written as nodata (NaN) and are excluded from segmentation and volume.
 5. Resolution: If `--res` is not specified, it is estimated as `1 / sqrt(point_density)` from the LAS header.
 
 #### Outputs
@@ -125,9 +125,9 @@ python main.py `
 
 ### Stage 2: Canopy Segmentation (`canopy_segmentation/segmentation.py`)
 
-1. Marker refinement: Each input tree-top point is snapped to the CHM local maximum within a 1.75 m buffer window.
+1. Marker refinement: Each input tree-top point is snapped to the CHM local maximum within a disk around it. The disk radius is half the smallest distance between any two markers, less one pixel, so two markers can never snap to the same pixel; it is never more than 1.75 m. `refine_tree_tops` and `segment_canopies` accept `buffer_meters` to set the radius explicitly; if two markers then snap to the same pixel the run stops and names them.
 2. Watershed segmentation: Runs scikit-image's `watershed` on the inverted, Gaussian-smoothed CHM (sigma=0.5), using the refined markers as seeds. Only pixels with CHM > 0.1 m are included in the segmentation mask.
-3. Polygon extraction: Each segment label is converted to a polygon. Small holes (< 8 px) are filled; small objects (< 8 px) are removed.
+3. Polygon extraction: Each segment label is converted to a polygon. Small holes (< 8 px) are filled; small objects (< 8 px) are removed. A segment left in several pieces is written as one multipart polygon.
 
 #### Outputs
 
