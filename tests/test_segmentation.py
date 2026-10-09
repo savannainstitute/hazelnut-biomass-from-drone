@@ -225,6 +225,25 @@ def test_extent_keeps_only_the_seeds_inside_it(tmp_path):
     assert sorted(written.max_h) == pytest.approx([1.5, 1.8])
 
 
+def test_crown_crossing_the_extent_boundary_is_kept_whole(tmp_path):
+    chm = np.zeros((100, 100))
+    add_cone(chm, 50, 50, 8, 1.5)
+    chm_path = write_chm(tmp_path / "planted_chm.tif", chm)
+    seeds = write_seeds(tmp_path / "seeds.shp", [(50, 50)])
+    # the extent's west edge is 0.3 m from the seed, inside the crown
+    extent = str(tmp_path / "extent.shp")
+    gpd.GeoDataFrame(
+        geometry=[box(500004.75, 3999990.0, 500010.0, 4000000.0)], crs=CRS
+    ).to_file(extent)
+    segmentation.segment_canopies(
+        chm_path, seeds, str(tmp_path), extent_shapefile=extent
+    )
+    written = gpd.read_file(tmp_path / "planted_segments.shp")
+    crown_px = int((chm > 0).sum())
+    assert written.area_m2.iloc[0] == pytest.approx(crown_px * RES**2)
+    assert written.geometry.area.iloc[0] == pytest.approx(crown_px * RES**2)
+
+
 def test_extent_with_no_seed_inside_returns_none(tmp_path):
     chm = np.zeros((80, 80))
     add_cone(chm, 40, 40, 6, 1.0)

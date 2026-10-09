@@ -54,7 +54,11 @@ def run_pdal_pipeline(pipeline_json):
         os.remove(pipeline_path)
 
 
-def get_crop_polygon_wkt(shapefile_path, las_path):
+# The SMRF window default, documented as the largest canopy diameter.
+MAX_CANOPY_DIAMETER_M = 2.5
+
+
+def get_crop_polygon_wkt(shapefile_path, las_path, margin_m=0.0):
     """
     Return the extent polygon as WKT in the CRS of the LAS file.
 
@@ -64,6 +68,9 @@ def get_crop_polygon_wkt(shapefile_path, las_path):
     Args:
         shapefile_path (str): Path to the extent polygon shapefile.
         las_path (str): Path to the LAS file the polygon will crop.
+        margin_m (float): Distance in meters to grow the polygon by, so a
+            bush seeded just inside the extent keeps the points of its
+            whole crown.
 
     Raises:
         ValueError: If the shapefile or the LAS file has no CRS. Assign one
@@ -88,7 +95,7 @@ def get_crop_polygon_wkt(shapefile_path, las_path):
     if gdf.crs != las_crs:
         logging.info(f"Reprojecting extent from {gdf.crs} to the LAS CRS")
         gdf = gdf.to_crs(las_crs)
-    return gdf.geometry.union_all().wkt
+    return gdf.geometry.union_all().buffer(margin_m).wkt
 
 
 def classify_ground(
@@ -97,7 +104,7 @@ def classify_ground(
     scalar=1.2,
     slope=0.15,
     threshold=0.07,
-    window=2.5,
+    window=MAX_CANOPY_DIAMETER_M,
     crop_polygon=None,
 ):
     """
@@ -293,8 +300,8 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
         input_las (str): Path to input LAS file.
         output_dir (str): Output directory for all results.
         res (float, optional): Raster resolution in meters (default 0.25).
-        extent_shapefile (str, optional): Path to extent shapefile for
-            cropping/masking.
+        extent_shapefile (str, optional): Path to extent shapefile. The
+            cloud is cropped to it grown by MAX_CANOPY_DIAMETER_M.
     Returns:
         dict: {
             "classified_las": path to ground-classified LAS,
@@ -315,7 +322,9 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
 
     crop_polygon = None
     if extent_shapefile:
-        crop_polygon = get_crop_polygon_wkt(extent_shapefile, input_las)
+        crop_polygon = get_crop_polygon_wkt(
+            extent_shapefile, input_las, margin_m=MAX_CANOPY_DIAMETER_M
+        )
 
     classify_ground(input_las, ground_las, crop_polygon=crop_polygon)
 

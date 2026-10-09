@@ -146,6 +146,19 @@ def test_extent_in_another_crs_is_reprojected_to_the_las_crs(tmp_path):
     assert polygon.symmetric_difference(TRIANGLE).area < 1e-3
 
 
+def test_crop_polygon_grows_by_the_margin(tmp_path):
+    las_path = write_las(tmp_path / "cloud.las")
+    extent = write_extent(
+        tmp_path / "extent.shp", [box(X0 + 5, Y0 + 5, X0 + 9, Y0 + 9)]
+    )
+    polygon = wkt.loads(
+        preprocessing.get_crop_polygon_wkt(extent, las_path, margin_m=2.5)
+    )
+    assert polygon.bounds == pytest.approx(
+        (X0 + 2.5, Y0 + 2.5, X0 + 11.5, Y0 + 11.5)
+    )
+
+
 def test_extent_with_several_features_crops_to_all_of_them(tmp_path):
     las_path = write_las(tmp_path / "cloud.las")
     squares = [

@@ -71,7 +71,7 @@ Hardware: All processing is CPU-based. No GPU is required. For full-orchard data
 |---|---|
 | Raw LAS file | Aerial LiDAR or SfM point cloud in LAS/LAZ format |
 | Tree-top marker shapefile | Point shapefile with one point per hazelnut bush (e.g., from RTK GPS survey or manual digitization over imagery) |
-| Extent shapefile (optional) | Polygon shapefile used to crop/mask all raster and vector outputs to an orchard boundary |
+| Extent shapefile (optional) | Polygon shapefile that limits processing to the bushes whose marker lies inside an orchard boundary |
 
 Tree-top markers are required and must be supplied by the user. They are used as watershed seeds. The pipeline refines each marker to the local CHM maximum within a snap radius derived from the marker spacing (see Stage 2).
 
@@ -97,7 +97,7 @@ python main.py `
 | `--tree-tops-shp` | Yes | Path to tree-top marker shapefile |
 | `--output-dir` | Yes | Directory for all outputs |
 | `--method` | No | Allometric model: `lidar` (default) or `sfm` |
-| `--extent-shapefile` | No | Polygon shapefile for spatial cropping/masking. The point cloud is cropped to the polygon itself, not its bounding box. The shapefile and the LAS file must both have a CRS; the polygon is reprojected to the LAS CRS when they differ. |
+| `--extent-shapefile` | No | Polygon shapefile that selects which bushes are processed: those whose marker lies inside it. Each selected bush keeps its whole crown, even where the crown crosses the extent boundary. The point cloud is cropped to the polygon grown by 2.5 m (the SMRF window, the largest canopy diameter), not to its bounding box. The shapefile and the LAS file must both have a CRS; the polygon is reprojected to the LAS CRS when they differ. |
 | `--res` | No | Raster resolution in meters (default: auto-estimated from point spacing) |
 
 ---

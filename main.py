@@ -23,7 +23,8 @@ def main():
     parser.add_argument(
         '--extent-shapefile',
         default=None,
-        help='Optional extent shapefile for cropping/masking',
+        help='Optional extent shapefile; only bushes whose marker lies '
+        'inside it are processed',
     )
     parser.add_argument(
         '--res',

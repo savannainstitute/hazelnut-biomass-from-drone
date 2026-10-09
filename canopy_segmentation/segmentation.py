@@ -3,7 +3,7 @@ Proximity-based segmentation of tree canopies from a CHM raster for
 hazelnut biomass estimation.
 
 Steps:
-1. Load CHM raster (optionally crop to extent)
+1. Load CHM raster (an optional extent selects which seeds are used)
 2. Refine bush/tree top points to local maxima within a buffer
 3. Adaptive watershed segmentation using tree tops
 4. Save results as shapefiles (canopy polygons and refined tree tops)
@@ -15,8 +15,7 @@ import os
 import geopandas as gpd
 import numpy as np
 import rasterio
-from rasterio import mask as rio_mask
-from rasterio.features import rasterize, shapes
+from rasterio.features import shapes
 from rasterio.transform import Affine, rowcol, xy
 from scipy import ndimage
 from scipy.spatial import cKDTree
@@ -38,45 +37,32 @@ def setup_logging():
 
 def load_chm(chm_path, extent_shapefile=None):
     """
-    Load a Canopy Height Model (CHM) raster, optionally cropping to a
-    shapefile extent.
+    Load a Canopy Height Model (CHM) raster and, when given, the extent
+    shapefile in the CHM's CRS.
+
+    The raster is not masked to the extent. The extent selects which seeds
+    are used; a bush whose seed is inside it keeps its whole crown, even
+    where the crown crosses the extent boundary.
 
     Args:
         chm_path (str): Path to the CHM raster (.tif).
-        extent_shapefile (str, optional): Path to a shapefile for cropping
-            extent.
+        extent_shapefile (str, optional): Path to an extent shapefile.
 
     Returns:
         chm (np.ndarray): 2D array of CHM values (float64, np.nan for nodata).
         profile (dict): Rasterio profile dictionary (metadata).
         res_m_per_px (float): Pixel resolution in meters.
-        extent_gdf (GeoDataFrame or None): Extent geometry if cropped,
-            else None.
+        extent_gdf (GeoDataFrame or None): Extent geometry in the CHM's
+            CRS, or None when no extent shapefile is given.
     """
     with rasterio.open(chm_path) as src:
+        extent_gdf = None
         if extent_shapefile:
-            gdf = gpd.read_file(extent_shapefile)
-            if gdf.crs != src.crs:
-                gdf = gdf.to_crs(src.crs)
-            geoms = [geom for geom in gdf.geometry]
-            arr, out_transform = rio_mask.mask(
-                src, geoms, crop=True, nodata=np.nan
-            )
-            profile = src.profile.copy()
-            profile.update(
-                {
-                    "height": arr.shape[1],
-                    "width": arr.shape[2],
-                    "transform": out_transform,
-                    "nodata": np.nan,
-                }
-            )
-            chm = arr[0].astype(np.float64)
-            extent_gdf = gdf
-        else:
-            chm = src.read(1).astype(np.float64)
-            profile = src.profile.copy()
-            extent_gdf = None
+            extent_gdf = gpd.read_file(extent_shapefile)
+            if extent_gdf.crs != src.crs:
+                extent_gdf = extent_gdf.to_crs(src.crs)
+        chm = src.read(1).astype(np.float64)
+        profile = src.profile.copy()
         nodata = profile.get("nodata", None)
         if nodata is not None:
             chm = np.where(chm == nodata, np.nan, chm)
@@ -104,56 +90,6 @@ def meters_to_pixels(distance_meters, res_m_per_px):
         int: Distance in pixels (rounded).
     """
     return int(round(distance_meters / res_m_per_px))
-
-
-def mask_markers_within_extent(markers, profile, extent_gdf):
-    """
-    Mask out marker pixels that fall outside the extent geometry.
-
-    Args:
-        markers (np.ndarray): 2D marker array.
-        profile (dict): Rasterio profile.
-        extent_gdf (GeoDataFrame): Extent geometry.
-
-    Returns:
-        np.ndarray: Masked marker array.
-    """
-    if extent_gdf is None:
-        return markers
-    transform = profile["transform"]
-    rows, cols = np.where(markers > 0)
-    for r, c in zip(rows, cols):
-        x, y = xy(transform, int(r), int(c), offset="center")
-        pt = Point(x, y)
-        if not any(extent_gdf.contains(pt)):
-            markers[r, c] = 0
-    return markers
-
-
-def mask_segments_within_extent(segments, profile, extent_gdf):
-    """
-    Mask out segment pixels that fall outside the extent geometry.
-
-    Args:
-        segments (np.ndarray): 2D segment label array.
-        profile (dict): Rasterio profile.
-        extent_gdf (GeoDataFrame): Extent geometry.
-
-    Returns:
-        np.ndarray: Masked segment array.
-    """
-    if extent_gdf is None:
-        return segments
-    transform = profile["transform"]
-    mask_shape = segments.shape
-    extent_mask = rasterize(
-        [(geom, 1) for geom in extent_gdf.geometry],
-        out_shape=mask_shape,
-        transform=transform,
-        fill=0,
-        dtype=np.uint8,
-    )
-    return np.where(extent_mask == 1, segments, 0)
 
 
 # Largest snap radius used when none is given: the fixed radius this
@@ -319,7 +255,6 @@ def marker_watershed(
     profile,
     min_height=0.1,
     surface_smooth_sigma=0.5,
-    extent_gdf=None,
 ):
     """
     Perform marker-controlled watershed segmentation on the CHM using only
@@ -331,7 +266,6 @@ def marker_watershed(
         profile (dict): Rasterio profile.
         min_height (float): Minimum CHM height to consider.
         surface_smooth_sigma (float): Gaussian smoothing sigma for CHM.
-        extent_gdf (GeoDataFrame, optional): Extent geometry for masking.
 
     Returns:
         np.ndarray: Segmented label array.
@@ -342,14 +276,9 @@ def marker_watershed(
 
     threshold = min_height if min_height is not None else 0
     mask = np.isfinite(chm) & (chm > threshold)
-    if extent_gdf is not None:
-        mask = mask_segments_within_extent(
-            mask.astype(np.uint8), profile, extent_gdf
-        ).astype(bool)
     if not np.any(mask):
         logging.error(
-            "No valid CHM pixels to segment "
-            "(check minimum height threshold and extent)."
+            "No valid CHM pixels to segment (check minimum height threshold)."
         )
         return None
 
@@ -455,7 +384,6 @@ def save_segments(
     profile,
     output_dir,
     res_m_per_px=1.0,
-    extent_gdf=None,
     min_hole_area=8,
     min_object_size=8,
     refined_gdf=None,
@@ -470,7 +398,6 @@ def save_segments(
         profile (dict): Rasterio profile (for CRS).
         output_dir (str): Output directory.
         res_m_per_px (float): Raster resolution in meters per pixel.
-        extent_gdf (GeoDataFrame, optional): Extent geometry for masking.
         min_hole_area (int): Minimum hole area to fill in polygons.
         min_object_size (int): Minimum object size to keep in polygons.
         refined_gdf (GeoDataFrame, optional): Refined points with attributes
@@ -484,12 +411,8 @@ def save_segments(
     polygons = []
     labels = []
     stats = []
-    crossing_extent = set()
     transform = profile["transform"]
     pix_area = res_m_per_px**2
-    extent_union = (
-        extent_gdf.geometry.union_all() if extent_gdf is not None else None
-    )
     for lbl, window in enumerate(ndimage.find_objects(segments), start=1):
         if window is None:
             continue
@@ -502,17 +425,14 @@ def save_segments(
         window_transform = transform @ Affine.translation(
             window[1].start - 1, window[0].start - 1
         )
-        parts = []
-        for geom, _ in shapes(
-            mask_clean.astype(np.uint8),
-            mask=mask_clean,
-            transform=window_transform,
-        ):
-            poly = shape(geom)
-            if extent_union is not None and not poly.within(extent_union):
-                crossing_extent.add(lbl)
-                continue
-            parts.append(poly)
+        parts = [
+            shape(geom)
+            for geom, _ in shapes(
+                mask_clean.astype(np.uint8),
+                mask=mask_clean,
+                transform=window_transform,
+            )
+        ]
         if not parts:
             continue
         polygons.append(MultiPolygon(parts) if len(parts) > 1 else parts[0])
@@ -524,13 +444,6 @@ def save_segments(
             np.nanmean(heights) if np.any(np.isfinite(heights)) else np.nan
         )
         stats.append((area_m2, max_h, mean_h))
-    if crossing_extent:
-        logging.warning(
-            f"{len(crossing_extent)} segments reach the extent boundary and "
-            "had the parts not fully inside it left out; tree_id "
-            f"{sorted(crossing_extent)}, of which "
-            f"{sorted(crossing_extent - set(labels))} were dropped entirely"
-        )
     if len(polygons) == 0:
         logging.warning("No polygons generated from segments.")
         return
@@ -635,8 +548,8 @@ def segment_canopies(
         chm_path (str): Path to CHM raster.
         tree_tops_shp (str): Path to input marker shapefile.
         output_dir (str, optional): Output directory.
-        extent_shapefile (str, optional): Path to extent shapefile for
-            cropping/masking.
+        extent_shapefile (str, optional): Path to extent shapefile. Only
+            seeds inside it are used; their crowns are kept whole.
         buffer_meters (float, optional): Radius for local maxima search
             (meters). If None, derived from the seed spacing; see
             refine_tree_tops.
@@ -666,15 +579,12 @@ def segment_canopies(
     if markers is None:
         logging.error("No valid refined tree tops found; exiting.")
         return None
-    if extent_gdf is not None:
-        markers = mask_markers_within_extent(markers, profile, extent_gdf)
     segments = marker_watershed(
         chm,
         markers,
         profile,
         min_height=min_height,
         surface_smooth_sigma=surface_smooth_sigma,
-        extent_gdf=extent_gdf,
     )
     if segments is None:
         logging.error("Segmentation failed.")
@@ -690,7 +600,6 @@ def segment_canopies(
         profile,
         output_dir,
         res_m_per_px,
-        extent_gdf=extent_gdf,
         refined_gdf=refined_gdf,
     )
     save_refined_tree_tops(refined_gdf, profile, output_dir)
