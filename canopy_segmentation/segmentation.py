@@ -1,6 +1,6 @@
-"""
-Proximity-based segmentation of tree canopies from a CHM raster for
-hazelnut biomass estimation.
+"""Proximity-based segmentation of tree canopies from a CHM raster.
+
+Written for hazelnut biomass estimation.
 
 Steps:
 1. Load CHM raster (an optional extent selects which seeds are used)
@@ -26,8 +26,8 @@ from skimage.segmentation import watershed
 
 
 def setup_logging():
-    """
-    Set up logging for the module.
+    """Set up logging for the module.
+
     No inputs or outputs.
     """
     logging.basicConfig(
@@ -36,9 +36,7 @@ def setup_logging():
 
 
 def load_chm(chm_path, extent_shapefile=None):
-    """
-    Load a Canopy Height Model (CHM) raster and, when given, the extent
-    shapefile in the CHM's CRS.
+    """Load a CHM raster and, when given, the extent shapefile in its CRS.
 
     The raster is not masked to the extent. The extent selects which seeds
     are used; a bush whose seed is inside it keeps its whole crown, even
@@ -144,9 +142,9 @@ def snap_radii_px_from_spacing(gdf, res_m_per_px):
 
 
 def disk_mask(radius_px):
-    """
-    Return a boolean array of side 2 * radius_px + 1 that is True within
-    radius_px pixels of its center.
+    """Return a boolean disk mask of side 2 * radius_px + 1.
+
+    The mask is True within radius_px pixels of its center.
     """
     offsets = np.arange(-radius_px, radius_px + 1)
     return offsets[:, None] ** 2 + offsets[None, :] ** 2 <= radius_px**2
@@ -269,18 +267,14 @@ def refine_tree_tops(
 def marker_watershed(
     chm,
     markers,
-    profile,
     min_height=0.1,
     surface_smooth_sigma=0.5,
 ):
-    """
-    Perform marker-controlled watershed segmentation on the CHM using only
-    inverted height.
+    """Perform marker-controlled watershed segmentation on the inverted CHM.
 
     Args:
         chm (np.ndarray): CHM raster array.
         markers (np.ndarray): Marker array for segmentation.
-        profile (dict): Rasterio profile.
         min_height (float): Minimum CHM height to consider.
         surface_smooth_sigma (float): Gaussian smoothing sigma for CHM.
 
@@ -405,9 +399,7 @@ def save_segments(
     min_object_size=8,
     refined_gdf=None,
 ):
-    """
-    Convert segment labels to polygons, merge with attributes, and save as a
-    shapefile.
+    """Convert segment labels to polygons with attributes; save a shapefile.
 
     Args:
         segments (np.ndarray): Segmented label array.
@@ -525,8 +517,8 @@ def remove_shapefile_if_exists(path_shp):
         if os.path.exists(p):
             try:
                 os.remove(p)
-            except Exception:
-                pass
+            except OSError as e:
+                logging.warning("Could not remove %s: %s", p, e)
 
 
 def prefix_from_chm(chm_path):
@@ -557,9 +549,7 @@ def segment_canopies(
     surface_smooth_sigma=0.5,
     min_height=0.1,
 ):
-    """
-    Full pipeline: Load CHM, refine tree tops, segment canopies, and save
-    outputs.
+    """Run the pipeline: load CHM, refine tree tops, segment, save outputs.
 
     Args:
         chm_path (str): Path to CHM raster.
@@ -599,7 +589,6 @@ def segment_canopies(
     segments = marker_watershed(
         chm,
         markers,
-        profile,
         min_height=min_height,
         surface_smooth_sigma=surface_smooth_sigma,
     )

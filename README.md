@@ -195,9 +195,9 @@ Run with the `hazelnut-biomass` kernel (installed as `ipykernel` in the conda en
 
 ## Supplemental: Regression Analysis
 
-`supplemental/lr.py` provides CLI-accessible regression diagnostics used to derive the allometric coefficients embedded in `biomass.py`. It fits raw linear, log-transformed linear, and pooled linear models to a `biomass_kg` vs. `volume_m3` CSV and reports R², Shapiro-Wilk normality, RMSE, and relative RMSE.
+`supplemental/lr.py` provides CLI-accessible regression diagnostics used to derive the allometric coefficients embedded in `biomass_estimation/biomass.py`. It fits raw linear, log-transformed linear, and pooled linear models to a `biomass_kg` vs. `volume_m3` CSV and reports R², Shapiro-Wilk normality, RMSE, and relative RMSE.
 
-The ground-truth CSV (`ground_truth.csv`) will be released in `supplemental/` upon publication. Once available:
+The ground-truth CSV will be released in `supplemental/` upon publication. Once available:
 
 ```powershell
 python supplemental/lr.py --csv "supplemental/ground_truth.csv" --plot

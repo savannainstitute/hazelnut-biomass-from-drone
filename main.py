@@ -1,3 +1,5 @@
+"""Run the pipeline: preprocess LiDAR, segment canopies, estimate biomass."""
+
 import argparse
 import os
 
@@ -7,6 +9,7 @@ from lidar_preprocessing.preprocessing import preprocess_lidar
 
 
 def main():
+    """Parse the command line and run the three stages in order."""
     parser = argparse.ArgumentParser(
         description=(
             "Full pipeline: LiDAR preprocessing, canopy segmentation, "

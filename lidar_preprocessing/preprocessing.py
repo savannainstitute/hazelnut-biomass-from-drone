@@ -1,6 +1,6 @@
-"""
-Preprocess LiDAR point cloud data for hazelnut biomass estimation using
-PDAL and rasterio.
+"""Preprocess LiDAR point clouds for hazelnut biomass estimation.
+
+Uses PDAL and rasterio.
 
 Steps:
 1. Ground classification (PDAL)
@@ -108,7 +108,7 @@ def classify_ground(
     crop_polygon=None,
 ):
     """
-    Classify ground points using PDAL SMRF filter. https://pdal.io/en/stable/stages/filters.smrf.html
+    Classify ground points using PDAL SMRF filter. https://pdal.io/en/stable/stages/filters.smrf.html.
 
     Args:
         input_las (str): Path to input LAS file.
@@ -147,9 +147,7 @@ def classify_ground(
 
 
 def estimate_point_spacing(las_path):
-    """
-    Estimate average point spacing from a LAS file using header info.
-    """
+    """Estimate average point spacing from a LAS file using header info."""
     logging.info("Estimating point spacing...")
     with laspy.open(las_path) as las:
         header = las.header
@@ -168,9 +166,9 @@ def estimate_point_spacing(las_path):
 
 
 def create_dtm(classified_las, dtm_tif, res=None):
-    """
-    Create Digital Terrain Model (DTM) from ground-classified LAS. Uses
-    inverse-distance weighting
+    """Create a Digital Terrain Model (DTM) from a ground-classified LAS.
+
+    Uses inverse-distance weighting.
 
     Args:
         classified_las (str): Path to ground-classified LAS file.
@@ -294,8 +292,8 @@ def create_chm(dsm_tif, dtm_tif, chm_tif):
 
 
 def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
-    """
-    Run all preprocessing steps and return file paths.
+    """Run all preprocessing steps and return file paths.
+
     Args:
         input_las (str): Path to input LAS file.
         output_dir (str): Output directory for all results.
@@ -309,7 +307,7 @@ def preprocess_lidar(input_las, output_dir, res=None, extent_shapefile=None):
             "dsm": path to DSM GeoTIFF,
             "chm": path to CHM GeoTIFF,
             "chm_array": CHM array (numpy)
-        }
+        }.
     """
     os.makedirs(output_dir, exist_ok=True)
     logging.basicConfig(level=logging.INFO)
