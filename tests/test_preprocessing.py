@@ -1,7 +1,8 @@
-"""
-Tests for lidar_preprocessing.preprocessing on small planted rasters and
-point clouds whose correct answer is known by construction. The cropping
-tests run PDAL, so the suite needs the hazelnut-biomass conda env.
+"""Tests for lidar_preprocessing.preprocessing on planted inputs.
+
+The rasters and point clouds are small and their correct answer is known by
+construction. The cropping tests run PDAL, so the suite needs the hazelnut-
+biomass conda env.
 
 Run from the repository root with: python -m pytest tests
 """

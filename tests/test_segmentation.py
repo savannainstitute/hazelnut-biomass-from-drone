@@ -1,6 +1,6 @@
-"""
-Tests for canopy_segmentation.segmentation on small planted rasters whose
-correct answer is known by construction.
+"""Tests for canopy_segmentation.segmentation on planted rasters.
+
+The rasters are small and their correct answer is known by construction.
 
 Run from the repository root with: python -m pytest tests
 """
@@ -153,9 +153,7 @@ def test_nodata_beside_a_marker_does_not_hand_its_crown_to_a_neighbor():
     markers = np.zeros(chm.shape, dtype=np.int32)
     markers[30, 30] = 1
     markers[30, 48] = 2
-    segments = segmentation.marker_watershed(
-        chm, markers, {"transform": TRANSFORM}
-    )
+    segments = segmentation.marker_watershed(chm, markers)
     # the short bush keeps the side of its crown facing away from the tall
     # one: columns 49 to 58 of the row through its top
     assert (segments[30, 50:58] == 2).all()

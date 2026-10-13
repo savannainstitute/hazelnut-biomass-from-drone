@@ -67,38 +67,38 @@ def run_regressions(df_full, df, do_print=True):
             - 'pooled_rmse': RMSE of pooled model.
             - 'y_pred': Predicted biomass values from pooled model.
     """
-    X = df[['volume_m3']]
+    x = df[['volume_m3']]
     y = df['biomass_kg']
     y_log = np.log1p(y)
 
-    lr_raw = LinearRegression(fit_intercept=False).fit(X, y)
-    lr_log = LinearRegression(fit_intercept=False).fit(X, y_log)
+    lr_raw = LinearRegression(fit_intercept=False).fit(x, y)
+    lr_log = LinearRegression(fit_intercept=False).fit(x, y_log)
 
-    resid_raw = y - lr_raw.predict(X)
-    resid_log = y_log - lr_log.predict(X)
+    resid_raw = y - lr_raw.predict(x)
+    resid_log = y_log - lr_log.predict(x)
 
     if do_print:
         print("Model fit:")
         try:
             sh_raw_p = shapiro(resid_raw).pvalue
-        except Exception:
+        except ValueError:
             sh_raw_p = float('nan')
         try:
             sh_log_p = shapiro(resid_log).pvalue
-        except Exception:
+        except ValueError:
             sh_log_p = float('nan')
         print(
-            f"  Raw: R² = {r2_score(y, lr_raw.predict(X)):.3f}, "
+            f"  Raw: R² = {r2_score(y, lr_raw.predict(x)):.3f}, "
             f"Shapiro p = {sh_raw_p:.3f}"
         )
         print(
-            f"  Log: R² = {r2_score(y_log, lr_log.predict(X)):.3f}, "
+            f"  Log: R² = {r2_score(y_log, lr_log.predict(x)):.3f}, "
             f"Shapiro p = {sh_log_p:.3f}"
         )
 
     n = len(y)
     dof = max(1, n - 1)
-    mse = np.sum((y - lr_raw.predict(X)) ** 2) / dof
+    mse = np.sum((y - lr_raw.predict(x)) ** 2) / dof
     se = np.sqrt(mse)
     t_val = t.ppf(0.975, dof)
     ci = t_val * se
@@ -146,7 +146,7 @@ def optional_plot(df_full, y_pred):
     """
     try:
         import matplotlib.pyplot as plt
-    except Exception:
+    except ImportError:
         warnings.warn("matplotlib not available; skipping plots")
         return
     plt.figure(figsize=(6, 4))
@@ -192,7 +192,7 @@ def main(argv=None):
 
     try:
         df_full, df = load_data(args.csv)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  any load error is reported
         print(f"Error loading data: {e}")
         return 2
 
